@@ -490,15 +490,16 @@ export function createBot(config, state, roster, github, mailer) {
     if (!state.get().rolloutStartedAt) state.update(data => { data.rolloutStartedAt = Date.now(); });
     await guild.commands.set(commands(config));
     const channel = guild.channels.cache.get(server.channels.startHere);
+    const welcome = { content: "Welcome to TigerApps. Let's get you set up.",
+      components: [row(button('onboard:start', 'Get started'))] };
     let panel = null;
     if (state.get().panelId) {
       try { panel = await channel.messages.fetch(state.get().panelId); } catch { /* Post one replacement. */ }
     }
     if (!panel) {
-      panel = await channel.send({ content: 'Welcome to TigerApps. Set up access if you were accepted, or join as a guest.',
-        components: [row(button('onboard:start', 'Set up access'))] });
+      panel = await channel.send(welcome);
       state.update(data => { data.panelId = panel.id; });
-    }
+    } else if (panel.content !== welcome.content) await panel.edit(welcome);
     state.cleanExpired();
     for (const [id, action] of Object.entries(state.get().actions)) {
       if (['executing', 'sending', 'uncertain'].includes(action.status) && !action.recoveryNotifiedAt) {
