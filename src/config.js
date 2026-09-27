@@ -47,7 +47,7 @@ export function validateServerConfig(config) {
 export function loadConfig() {
   const required = [
     'DISCORD_TOKEN', 'DISCORD_APP_ID', 'DISCORD_CLIENT_SECRET', 'PUBLIC_BASE_URL',
-    'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_SERVICE_ACCOUNT_JSON',
+    'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET', 'GOOGLE_SERVICE_ACCOUNT_JSON',
     'ROSTER_SPREADSHEET_ID', 'GITHUB_APP_ID',
     'GITHUB_INSTALLATION_ID', 'GITHUB_PRIVATE_KEY',
   ];
@@ -73,6 +73,8 @@ export function loadConfig() {
     discordSecret: process.env.DISCORD_CLIENT_SECRET,
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    gmailClientId: process.env.GMAIL_CLIENT_ID,
+    gmailClientSecret: process.env.GMAIL_CLIENT_SECRET,
     googleServiceAccount,
     rosterSpreadsheetId: process.env.ROSTER_SPREADSHEET_ID,
     gmailRefreshToken,

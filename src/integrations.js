@@ -97,7 +97,7 @@ export function mailMessage({ subject, body, to, cc, bcc }) {
 
 export class Mailer {
   constructor(config) {
-    this.auth = new OAuth2Client(config.googleClientId, config.googleClientSecret);
+    this.auth = new OAuth2Client(config.gmailClientId, config.gmailClientSecret);
     this.auth.setCredentials({ refresh_token: config.gmailRefreshToken });
   }
 

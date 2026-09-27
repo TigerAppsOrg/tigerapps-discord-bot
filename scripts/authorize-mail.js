@@ -3,12 +3,12 @@ import { createServer } from 'node:http';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { OAuth2Client } from 'google-auth-library';
 
-const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } = process.env;
-if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) throw new Error('Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET first.');
+const { GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET } = process.env;
+if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET) throw new Error('Set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET first.');
 
 const redirect = 'http://localhost:3741/callback';
 const state = randomBytes(24).toString('base64url');
-const client = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirect);
+const client = new OAuth2Client(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, redirect);
 const url = client.generateAuthUrl({
   access_type: 'offline', prompt: 'consent',
   scope: ['openid', 'email', 'https://www.googleapis.com/auth/gmail.send'], state,
@@ -21,7 +21,7 @@ const server = createServer(async (request, response) => {
   }
   try {
     const { tokens } = await client.getToken(incoming.searchParams.get('code') || '');
-    const ticket = await client.verifyIdToken({ idToken: tokens.id_token, audience: GOOGLE_CLIENT_ID });
+    const ticket = await client.verifyIdToken({ idToken: tokens.id_token, audience: GMAIL_CLIENT_ID });
     const identity = ticket.getPayload();
     if (identity?.email_verified !== true || identity.email?.toLowerCase() !== 'it.admin@princetonusg.com' || !tokens.refresh_token) {
       throw new Error('Use the TigerApps mailbox and grant offline mail sending.');
