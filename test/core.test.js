@@ -139,18 +139,19 @@ test('server reads file-backed credentials from private paths', () => {
   }
 });
 
-test('commands use interaction roles and cancellation preserves a claimed action', async () => {
+test('commands select Board announcement teams, match roster GitHub handles, and preserve claimed actions', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'tigerapps-interaction-'));
   const state = new State(join(dir, 'state.json'));
+  const rows = [{ name: 'Member A', email: 'a@princeton.edu', github: 'https://github.com/Member-A' }];
   const { client } = createBot({ baseUrl: 'http://localhost:3000', server: {
     guildId: '1275140369457348638', roles: { board: 'board', teamLead: 'lead' },
-    channels: { startHere: 'channel' }, teams: {},
-  } }, state, {}, {}, {});
+    channels: { startHere: 'channel' }, teams: { TigerOps: { roleId: 'team', channelId: 'channel', leadIds: [] } },
+  } }, state, { all: async () => rows, byEmail: async email => rows.find(row => row.email === email) }, {}, {});
   const base = { guildId: '1275140369457348638', user: { id: 'user' },
     isModalSubmit: () => false, isStringSelectMenu: () => false };
   const emit = interaction => new Promise(resolve => client.emit('interactionCreate', {
     ...base, isChatInputCommand: () => false, isButton: () => false,
-    reply: resolve, update: resolve, showModal: resolve, ...interaction,
+    reply: resolve, update: resolve, showModal: resolve, editReply: resolve, deferReply: async () => {}, ...interaction,
   }));
   try {
     state.update(data => { data.actions.claimed = { actorId: 'user', status: 'executing', expiresAt: Date.now() + 60_000 }; });
@@ -161,5 +162,27 @@ test('commands use interaction roles and cancellation preserves a claimed action
       inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
       options: { getString: () => null }, });
     assert.equal(modal.toJSON().title, 'TigerApps announcement');
+    await emit({ isChatInputCommand: () => true, commandName: 'announce',
+      inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
+      options: { getString: () => 'TigerOps' } });
+    assert.ok(Object.values(state.get().actions).some(action => action.type === 'announce' && action.team === 'TigerOps'));
+    const invite = await emit({ isChatInputCommand: () => true, commandName: 'github-invite',
+      inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
+      options: { getString: name => name === 'username' ? 'member-a' : null } });
+    assert.match(invite.content, /Invite Member A/);
+    assert.ok(Object.values(state.get().actions).some(action => action.type === 'github-invite' && action.email === 'a@princeton.edu'));
+    const emailInvite = await emit({ isChatInputCommand: () => true, commandName: 'github-invite',
+      inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
+      options: { getString: name => name === 'email' ? 'a@princeton.edu' : null } });
+    assert.match(emailInvite.content, /Invite Member A/);
+    rows.push({ name: 'Member B', email: 'b@princeton.edu', github: 'Member-A' });
+    const originalError = console.error;
+    try {
+      console.error = () => {};
+      const ambiguous = await emit({ isChatInputCommand: () => true, commandName: 'github-invite',
+        inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
+        options: { getString: name => name === 'username' ? 'member-a' : null } });
+      assert.match(ambiguous.content, /must match one Clean-roster member/);
+    } finally { console.error = originalError; }
   } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
 });

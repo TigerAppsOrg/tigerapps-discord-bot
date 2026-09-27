@@ -47,13 +47,14 @@ function commands(config) {
     new SlashCommandBuilder().setName('remove').setDescription('Board: remove a member’s access')
       .addUserOption(option => option.setName('member').setDescription('Discord member').setRequired(true))
       .addStringOption(option => option.setName('reason').setDescription('Reason for removal').setRequired(true).setMaxLength(300)),
-    new SlashCommandBuilder().setName('announce').setDescription('Announce to TigerApps or your team')
+    new SlashCommandBuilder().setName('announce').setDescription('Announce to TigerApps or a team')
       .addStringOption(option => option.setName('team').setDescription('Team; Board may omit for club-wide').addChoices(...teamChoices)),
     new SlashCommandBuilder().setName('info').setDescription('Look up a roster member privately')
       .addUserOption(option => option.setName('member').setDescription('Linked Discord member'))
       .addStringOption(option => option.setName('email').setDescription('Exact Princeton roster email')),
     new SlashCommandBuilder().setName('github-invite').setDescription('Invite a roster member to the GitHub organization')
-      .addStringOption(option => option.setName('email').setDescription('Exact Princeton roster email').setRequired(true)),
+      .addStringOption(option => option.setName('username').setDescription('GitHub username on the Clean roster'))
+      .addStringOption(option => option.setName('email').setDescription('Exact Princeton roster email')),
   ].map(command => command.toJSON());
 }
 
@@ -108,7 +109,7 @@ export function createBot(config, state, roster, github, mailer) {
     }
     const member = interaction.inCachedGuild() ? interaction.member : await currentMember(interaction.user.id);
     if (!member.joinedTimestamp || member.joinedTimestamp < state.get().rolloutStartedAt) {
-      await interaction.editReply({ content: 'Your Princeton account is linked. Board will review existing members’ roles separately.' });
+      await interaction.editReply({ content: 'Your Princeton account is linked.' });
       return;
     }
     const chosen = {
@@ -245,11 +246,17 @@ export function createBot(config, state, roster, github, mailer) {
     }
     if (interaction.commandName === 'github-invite') {
       if (!isBoard(actor) && !isLead(actor)) throw new Error('Only Board and Team Leads can invite members.');
-      const email = interaction.options.getString('email').trim().toLowerCase();
+      const email = interaction.options.getString('email')?.trim().toLowerCase();
+      const input = interaction.options.getString('username')?.trim();
+      if (Boolean(email) === Boolean(input)) throw new Error('Provide either an email or GitHub username.');
+      const username = input && githubHandle(input);
+      if (input && !username) throw new Error('Invalid GitHub username.');
       await interaction.deferReply({ flags: ephemeral });
-      const person = await roster.byEmail(email);
-      if (!person) throw new Error('That email is not on the Clean roster.');
-      const id = saveAction(actor.id, { type: 'github-invite', email, githubTarget: githubHandle(person.github) });
+      const matches = username ? (await roster.all()).filter(row => githubHandle(row.github)?.toLowerCase() === username.toLowerCase())
+        : [await roster.byEmail(email)].filter(Boolean);
+      if (matches.length !== 1) throw new Error(username ? 'GitHub username must match one Clean-roster member.' : 'That email is not on the Clean roster.');
+      const person = matches[0];
+      const id = saveAction(actor.id, { type: 'github-invite', email: person.email, githubTarget: githubHandle(person.github) });
       await interaction.editReply({ content: `Invite ${person.name} to TigerAppsOrg as a member?\nGitHub target: ${githubHandle(person.github) || person.email}\nThe invitation is pending until accepted. Current organization base access is write.`, components: confirmButtons(id) });
       return;
     }
@@ -257,7 +264,7 @@ export function createBot(config, state, roster, github, mailer) {
       const requested = interaction.options.getString('team');
       let team = null;
       if (isBoard(actor)) {
-        if (requested) throw new Error('Board announcements are club-wide. Omit team.');
+        team = requested || null;
       } else if (isLead(actor)) {
         const allowed = leadsFor(actor);
         if (!allowed.length) throw new Error('Your Team Lead role is not mapped to a team yet.');
@@ -443,7 +450,8 @@ export function createBot(config, state, roster, github, mailer) {
         'The server owner must handle Board removals.', 'Only Board can use /remove.',
         '/remove is for people, not apps.',
         'Only Board and Team Leads can invite members.', 'That email is not on the Clean roster.',
-        'Board announcements are club-wide. Omit team.', 'Your Team Lead role is not mapped to a team yet.',
+        'Provide either an email or GitHub username.', 'Invalid GitHub username.', 'GitHub username must match one Clean-roster member.',
+        'Your Team Lead role is not mapped to a team yet.',
         'Verify your Princeton account with /onboard before sending team email.',
         'Only Board and Team Leads can announce.', 'No roster email recipients found for this announcement.',
         'Verify your Princeton account with /onboard first.', 'Run /onboard and verify your Princeton account first.',

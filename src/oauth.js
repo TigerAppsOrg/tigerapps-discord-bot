@@ -95,7 +95,7 @@ export function createOAuth(config, state, roster, client) {
         try {
           const guild = await client.guilds.fetch(config.server.guildId);
           const member = await guild.members.fetch(attempt.discordId);
-          if (member.joinedTimestamp < state.get().rolloutStartedAt) next = 'Verified. Board will review your existing Discord roles separately.';
+          if (member.joinedTimestamp < state.get().rolloutStartedAt) next = "You're verified.";
         } catch { /* The member can use /onboard for the next step. */ }
         page(response, 200, next, discordLink, true);
         try { await (await client.users.fetch(attempt.discordId)).send(`${next} ${discordLink}`); } catch { /* DMs may be closed. */ }

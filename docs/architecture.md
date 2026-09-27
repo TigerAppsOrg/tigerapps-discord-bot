@@ -91,8 +91,8 @@ The rollout cutoff is saved at first successful startup. Existing server members
 | --- | --- | --- |
 | `/onboard` | Any member | Starts or retries account linking and ordinary role selection |
 | `/info` | Board or Team Lead | Private response with one Clean-roster person's name, team, role, year, GitHub, email, and phone |
-| `/announce` | Board club-wide; leads for mapped teams | Preview, then post to Discord and send roster email through Gmail with hidden recipients |
-| `/github-invite` | Board or Team Lead | Invite an exact Clean-roster member to TigerAppsOrg; acceptance remains pending |
+| `/announce` | Board club-wide or for any team; leads for mapped teams | Preview, then post to Discord and send roster email through Gmail with hidden recipients |
+| `/github-invite` | Board or Team Lead | Invite an exact Clean-roster member by GitHub username or Princeton email; acceptance remains pending |
 | `/resign` | Linked non-Board member | Move controllable Discord roles to Alumni, flag Status Review, notify Board; GitHub remains unchanged |
 | `/remove` | Board | Move target to Guest, flag Status Review, attempt GitHub org removal, notify Board of any partial failure |
 
@@ -115,7 +115,7 @@ sequenceDiagram
   end
 ```
 
-`/announce` sends from `it.admin@princetonusg.com`. Team mail uses the lead's linked Princeton address as To and Reply-To and CCs the TigerApps mailbox; recipients are BCC. Board mail uses the TigerApps mailbox as To and Reply-To. A confirmed announcement can have a partial outcome: if the Discord post succeeded but Gmail's response is uncertain, check the Sent mailbox before retrying.
+`/announce` sends from `it.admin@princetonusg.com`. Team mail uses the sender's linked Princeton address as To and Reply-To and CCs the TigerApps mailbox; recipients are BCC. Club-wide Board mail uses the TigerApps mailbox as To and Reply-To. A confirmed announcement can have a partial outcome: if the Discord post succeeded but Gmail's response is uncertain, check the Sent mailbox before retrying.
 
 ## Permissions and configuration
 
