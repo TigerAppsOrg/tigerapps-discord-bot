@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateServerConfig } from '../src/config.js';
+import { createBot } from '../src/bot.js';
 import { Github, announcementRecipients, githubHandle, mailMessage } from '../src/integrations.js';
 import { verifiedPrincetonEmail } from '../src/oauth.js';
 import { Roster, parseRoster, rosterFunctions, rosterTeams } from '../src/roster.js';
@@ -104,4 +105,29 @@ test('server mapping rejects duplicate role IDs and malformed channels', () => {
   assert.equal(validateServerConfig(config), config);
   assert.throws(() => validateServerConfig({ ...config, roles: { ...config.roles, member: config.roles.guest } }), /reuses/);
   assert.throws(() => validateServerConfig({ ...config, channels: { ...config.channels, startHere: 'invalid' } }), /startHere/);
+});
+
+test('commands use interaction roles and cancellation preserves a claimed action', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tigerapps-interaction-'));
+  const state = new State(join(dir, 'state.json'));
+  const { client } = createBot({ baseUrl: 'http://localhost:3000', server: {
+    guildId: '1275140369457348638', roles: { board: 'board', teamLead: 'lead' },
+    channels: { startHere: 'channel' }, teams: {},
+  } }, state, {}, {}, {});
+  const base = { guildId: '1275140369457348638', user: { id: 'user' },
+    isModalSubmit: () => false, isStringSelectMenu: () => false };
+  const emit = interaction => new Promise(resolve => client.emit('interactionCreate', {
+    ...base, isChatInputCommand: () => false, isButton: () => false,
+    reply: resolve, update: resolve, showModal: resolve, ...interaction,
+  }));
+  try {
+    state.update(data => { data.actions.claimed = { actorId: 'user', status: 'executing', expiresAt: Date.now() + 60_000 }; });
+    const denied = await emit({ isButton: () => true, customId: 'cancel:claimed' });
+    assert.match(denied.content, /already started/);
+    assert.equal(state.get().actions.claimed.status, 'executing');
+    const modal = await emit({ isChatInputCommand: () => true, commandName: 'announce',
+      inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
+      options: { getString: () => null }, });
+    assert.equal(modal.toJSON().title, 'TigerApps announcement');
+  } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
 });

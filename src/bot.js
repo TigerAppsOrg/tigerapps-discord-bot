@@ -100,14 +100,15 @@ export function createBot(config, state, roster, github, mailer) {
         components: [row(button('onboard:accepted', 'Accepted'), button('onboard:guest', 'Guest', ButtonStyle.Secondary))] });
       return;
     }
+    await interaction.deferReply({ flags: ephemeral });
     const person = await roster.byEmail(link.email);
     if (!person) {
-      await interaction.reply({ flags: ephemeral, content: `Your Princeton email is not on the current roster. Ask a lead in <#${server.channels.publicChat}>.` });
+      await interaction.editReply({ content: `Your Princeton email is not on the current roster. Ask a lead in <#${server.channels.publicChat}>.` });
       return;
     }
-    const member = await currentMember(interaction.user.id);
+    const member = interaction.inCachedGuild() ? interaction.member : await currentMember(interaction.user.id);
     if (!member.joinedTimestamp || member.joinedTimestamp < state.get().rolloutStartedAt) {
-      await interaction.reply({ flags: ephemeral, content: 'Your Princeton account is linked. Board will review existing members’ roles separately.' });
+      await interaction.editReply({ content: 'Your Princeton account is linked. Board will review existing members’ roles separately.' });
       return;
     }
     const chosen = {
@@ -118,7 +119,7 @@ export function createBot(config, state, roster, github, mailer) {
       expiresAt: Date.now() + 15 * 60_000,
     };
     state.update(data => { data.onboarding[interaction.user.id] = chosen; });
-    await interaction.reply({ flags: ephemeral, ...choiceMessage(config, chosen) });
+    await interaction.editReply(choiceMessage(config, chosen));
   }
 
   async function selection(interaction) {
@@ -202,17 +203,19 @@ export function createBot(config, state, roster, github, mailer) {
   }
 
   async function command(interaction) {
-    const actor = await currentMember(interaction.user.id);
     if (interaction.commandName === 'onboard') return startHere(interaction);
+    if (!interaction.inCachedGuild()) throw new Error('Server member data unavailable. Try again.');
+    const actor = interaction.member;
     if (interaction.commandName === 'info') {
       if (!isBoard(actor) && !isLead(actor)) throw new Error('Only Board and Team Leads can use /info.');
       const selectedUser = interaction.options.getUser('member');
       const suppliedEmail = interaction.options.getString('email')?.trim().toLowerCase();
       if (Boolean(selectedUser) === Boolean(suppliedEmail)) throw new Error('Provide either a Discord member or one exact roster email.');
       const email = selectedUser ? state.linkedByDiscord(selectedUser.id)?.email : suppliedEmail;
+      await interaction.deferReply({ flags: ephemeral });
       const person = email ? await roster.byEmail(email) : null;
       if (!person) throw new Error('No linked Clean-roster member found.');
-      await interaction.reply({ flags: ephemeral, allowedMentions: { parse: [] }, content: [
+      await interaction.editReply({ allowedMentions: { parse: [] }, content: [
         `Name: ${person.name}`, `Team: ${person.team}`, `Role: ${person.role}`, `Year: ${person.year}`,
         `GitHub: ${person.github || 'Not listed'}`, `Email: ${person.email}`, `Phone: ${person.phone || 'Not listed'}`,
       ].join('\n') });
@@ -229,6 +232,7 @@ export function createBot(config, state, roster, github, mailer) {
       if (!isBoard(actor)) throw new Error('Only Board can use /remove.');
       const target = interaction.options.getUser('member');
       if (target.bot) throw new Error('/remove is for people, not apps.');
+      await interaction.deferReply({ flags: ephemeral });
       const member = await currentMember(target.id);
       if (isBoard(member) || member.id === guild.ownerId) throw new Error('The server owner must handle Board removals.');
       const reason = interaction.options.getString('reason').trim();
@@ -236,16 +240,17 @@ export function createBot(config, state, roster, github, mailer) {
       let person = null;
       if (link) { try { person = await roster.byEmail(link.email); } catch { /* Preview can still show the Discord target. */ } }
       const id = saveAction(actor.id, { type: 'remove', targetId: target.id, reason, githubTarget: githubHandle(person?.github) });
-      await interaction.reply({ flags: ephemeral, content: `Remove ${target.username} from Discord club roles and attempt GitHub organization removal?\nGitHub target: ${githubHandle(person?.github) || 'not identified; Board follow-up may be needed'}\nReason: ${reason}\nRemoving GitHub membership also ends access to private forks.`, components: confirmButtons(id) });
+      await interaction.editReply({ content: `Remove ${target.username} from Discord club roles and attempt GitHub organization removal?\nGitHub target: ${githubHandle(person?.github) || 'not identified; Board follow-up may be needed'}\nReason: ${reason}\nRemoving GitHub membership also ends access to private forks.`, components: confirmButtons(id) });
       return;
     }
     if (interaction.commandName === 'github-invite') {
       if (!isBoard(actor) && !isLead(actor)) throw new Error('Only Board and Team Leads can invite members.');
       const email = interaction.options.getString('email').trim().toLowerCase();
+      await interaction.deferReply({ flags: ephemeral });
       const person = await roster.byEmail(email);
       if (!person) throw new Error('That email is not on the Clean roster.');
       const id = saveAction(actor.id, { type: 'github-invite', email, githubTarget: githubHandle(person.github) });
-      await interaction.reply({ flags: ephemeral, content: `Invite ${person.name} to TigerAppsOrg as a member?\nGitHub target: ${githubHandle(person.github) || person.email}\nThe invitation is pending until accepted. Current organization base access is write.`, components: confirmButtons(id) });
+      await interaction.editReply({ content: `Invite ${person.name} to TigerAppsOrg as a member?\nGitHub target: ${githubHandle(person.github) || person.email}\nThe invitation is pending until accepted. Current organization base access is write.`, components: confirmButtons(id) });
       return;
     }
     if (interaction.commandName === 'announce') {
@@ -258,8 +263,7 @@ export function createBot(config, state, roster, github, mailer) {
         if (!allowed.length) throw new Error('Your Team Lead role is not mapped to a team yet.');
         team = requested || (allowed.length === 1 ? allowed[0] : null);
         if (!team || !allowed.includes(team)) throw new Error(`Choose one of your teams: ${allowed.join(', ')}.`);
-        const link = state.linkedByDiscord(actor.id);
-        if (!link || !(await roster.byEmail(link.email))) throw new Error('Verify your Princeton account with /onboard before sending team email.');
+        if (!state.linkedByDiscord(actor.id)) throw new Error('Verify your Princeton account with /onboard before sending team email.');
       } else throw new Error('Only Board and Team Leads can announce.');
       const id = saveAction(actor.id, { type: 'announce', team, status: 'input' });
       const modal = new ModalBuilder().setCustomId(`announce:${id}`).setTitle('TigerApps announcement');
@@ -283,7 +287,11 @@ export function createBot(config, state, roster, github, mailer) {
     const subject = interaction.fields.getTextInputValue('subject').trim();
     const body = interaction.fields.getTextInputValue('body').trim();
     if (!subject || !body) throw new Error('Announcement needs a subject and message.');
-    const recipients = announcementRecipients(await roster.all(), action.team);
+    const rows = await roster.all();
+    if (action.team && !rows.some(row => row.email === state.linkedByDiscord(actor.id)?.email)) {
+      throw new Error('Verify your Princeton account with /onboard before sending team email.');
+    }
+    const recipients = announcementRecipients(rows, action.team);
     if (!recipients.length) throw new Error('No roster email recipients found for this announcement.');
     const to = action.team ? state.linkedByDiscord(actor.id)?.email : mailSender;
     if (!to) throw new Error('Verify your Princeton account with /onboard first.');
@@ -368,13 +376,14 @@ export function createBot(config, state, roster, github, mailer) {
     if (!action || action.actorId !== interaction.user.id || action.expiresAt < Date.now()) {
       await interaction.reply({ flags: ephemeral, content: 'This confirmation expired. Run the command again.' }); return;
     }
+    if (action.status !== 'ready') {
+      await interaction.reply({ flags: ephemeral, content: 'This action has already started. Ask Board to check its result before retrying.' }); return;
+    }
     if (verb === 'cancel') {
       state.update(data => { delete data.actions[id]; });
       await interaction.update({ content: 'Cancelled.', components: [] }); return;
     }
-    if (action.status !== 'ready') {
-      await interaction.reply({ flags: ephemeral, content: 'This action has already started. Ask Board to check its result before retrying.' }); return;
-    }
+    await interaction.deferUpdate();
     const actor = await currentMember(interaction.user.id);
     if ((action.type === 'remove' && !isBoard(actor)) ||
         (action.type === 'github-invite' && !isBoard(actor) && !isLead(actor)) ||
@@ -390,10 +399,9 @@ export function createBot(config, state, roster, github, mailer) {
       return true;
     });
     if (!claimed) {
-      await interaction.reply({ flags: ephemeral, content: 'This action has already started. Ask Board to check its result before retrying.' }); return;
+      await interaction.followUp({ flags: ephemeral, content: 'This action was cancelled or already started. Run the command again if needed.' }); return;
     }
     try {
-      await interaction.deferUpdate();
       let result;
       if (action.type === 'resign') result = { status: 'done', message: await resign(interaction.user.id) };
       if (action.type === 'remove') result = { status: 'done', message: await remove(action) };
@@ -442,7 +450,7 @@ export function createBot(config, state, roster, github, mailer) {
         'Your command access changed.', 'Announcement access changed.', 'Invalid role selection.',
       ].includes(error.message) || error.message.startsWith('Choose one of your teams:') ? error.message : 'That did not work. Please try again or ask Board for help.';
       try {
-        if (interaction.deferred && interaction.isModalSubmit()) await interaction.editReply({ content: safe, components: [] });
+        if (interaction.deferred && (interaction.isModalSubmit() || interaction.isChatInputCommand() || interaction.customId === 'onboard:start')) await interaction.editReply({ content: safe, components: [] });
         else if (interaction.deferred || interaction.replied) await interaction.followUp({ flags: ephemeral, content: safe });
         else await interaction.reply({ flags: ephemeral, content: safe });
       } catch { console.error('Could not report an interaction error to Discord.'); }
