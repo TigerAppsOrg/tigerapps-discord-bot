@@ -1,0 +1,19 @@
+[Unit]
+Description=TigerApps Discord bot
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/var/lib/tigerapps-discord-bot
+
+[Service]
+User=tigerapps-bot
+Group=tigerapps-bot
+WorkingDirectory=/var/lib/tigerapps-discord-bot/bot
+EnvironmentFile=/var/lib/tigerapps-discord-bot/bot/.env
+ExecStart=/usr/bin/node /opt/tigerapps-discord-bot/src/index.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

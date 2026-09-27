@@ -126,7 +126,7 @@ export function createOAuth(config, state, roster, client) {
       try { if (!(await handle(request, response))) { response.writeHead(404); response.end(); } }
       catch { if (!response.headersSent) response.writeHead(500); response.end(); }
     });
-    server.listen(config.port);
+    server.listen(config.port, '127.0.0.1');
     return server;
   }
 

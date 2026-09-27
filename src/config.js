@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 const id = value => typeof value === 'string' && /^\d{17,20}$/.test(value);
+const secret = (value, file) => value || (file ? readFileSync(file, 'utf8').trim() : '');
 
 export function validateServerConfig(config) {
   if (!config || !id(config.guildId)) throw new Error('server.json needs a Discord guildId');
@@ -47,21 +48,24 @@ export function validateServerConfig(config) {
 export function loadConfig() {
   const required = [
     'DISCORD_TOKEN', 'DISCORD_APP_ID', 'DISCORD_CLIENT_SECRET', 'PUBLIC_BASE_URL',
-    'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET', 'GOOGLE_SERVICE_ACCOUNT_JSON',
+    'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET',
     'ROSTER_SPREADSHEET_ID', 'GITHUB_APP_ID',
-    'GITHUB_INSTALLATION_ID', 'GITHUB_PRIVATE_KEY',
+    'GITHUB_INSTALLATION_ID',
   ];
   for (const key of required) if (!process.env[key]) throw new Error(`Missing ${key}`);
-  const gmailRefreshToken = process.env.GMAIL_REFRESH_TOKEN ||
-    (process.env.GMAIL_REFRESH_TOKEN_FILE ? readFileSync(process.env.GMAIL_REFRESH_TOKEN_FILE, 'utf8').trim() : '');
+  const gmailRefreshToken = secret(process.env.GMAIL_REFRESH_TOKEN, process.env.GMAIL_REFRESH_TOKEN_FILE);
   if (!gmailRefreshToken) throw new Error('Missing GMAIL_REFRESH_TOKEN or GMAIL_REFRESH_TOKEN_FILE');
+  const googleServiceAccountJson = secret(process.env.GOOGLE_SERVICE_ACCOUNT_JSON, process.env.GOOGLE_SERVICE_ACCOUNT_FILE);
+  if (!googleServiceAccountJson) throw new Error('Missing GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_SERVICE_ACCOUNT_FILE');
+  const githubPrivateKey = secret(process.env.GITHUB_PRIVATE_KEY, process.env.GITHUB_PRIVATE_KEY_FILE);
+  if (!githubPrivateKey) throw new Error('Missing GITHUB_PRIVATE_KEY or GITHUB_PRIVATE_KEY_FILE');
   const baseUrl = new URL(process.env.PUBLIC_BASE_URL);
   if (baseUrl.protocol !== 'https:' && baseUrl.hostname !== 'localhost') {
     throw new Error('PUBLIC_BASE_URL must use HTTPS outside localhost');
   }
   const server = validateServerConfig(JSON.parse(readFileSync(process.env.SERVER_CONFIG_FILE || 'server.json', 'utf8')));
   let googleServiceAccount;
-  try { googleServiceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON); }
+  try { googleServiceAccount = JSON.parse(googleServiceAccountJson); }
   catch { throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON'); }
   return {
     server,
@@ -80,7 +84,7 @@ export function loadConfig() {
     gmailRefreshToken,
     githubAppId: process.env.GITHUB_APP_ID,
     githubInstallationId: process.env.GITHUB_INSTALLATION_ID,
-    githubPrivateKey: process.env.GITHUB_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    githubPrivateKey: githubPrivateKey.replace(/\\n/g, '\n'),
   };
 }
 

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { validateServerConfig } from '../src/config.js';
+import { loadConfig, validateServerConfig } from '../src/config.js';
 import { createBot } from '../src/bot.js';
 import { Github, announcementRecipients, githubHandle, mailMessage } from '../src/integrations.js';
 import { verifiedPrincetonEmail } from '../src/oauth.js';
@@ -105,6 +105,38 @@ test('server mapping rejects duplicate role IDs and malformed channels', () => {
   assert.equal(validateServerConfig(config), config);
   assert.throws(() => validateServerConfig({ ...config, roles: { ...config.roles, member: config.roles.guest } }), /reuses/);
   assert.throws(() => validateServerConfig({ ...config, channels: { ...config.channels, startHere: 'invalid' } }), /startHere/);
+});
+
+test('server reads file-backed credentials from private paths', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tigerapps-config-'));
+  const server = {
+    guildId: '1275140369457348638',
+    roles: { guest: '1000000000000000001', member: '1000000000000000002', alumni: '1000000000000000003', teamLead: '1000000000000000004', board: '1000000000000000005' },
+    channels: { startHere: '2000000000000000001', publicChat: '2000000000000000002', announcements: '2000000000000000003', boardLog: '2000000000000000004' },
+    teams: {}, functions: {}, years: {},
+  };
+  const files = Object.fromEntries(['SERVER_CONFIG_FILE', 'GOOGLE_SERVICE_ACCOUNT_FILE', 'GITHUB_PRIVATE_KEY_FILE', 'GMAIL_REFRESH_TOKEN_FILE']
+    .map((key, i) => [key, join(dir, `${i}.txt`)]));
+  const env = { ...files, DISCORD_TOKEN: 'bot', DISCORD_APP_ID: 'app', DISCORD_CLIENT_SECRET: 'discord',
+    PUBLIC_BASE_URL: 'https://api.tigerapps.org', GOOGLE_CLIENT_ID: 'google', GOOGLE_CLIENT_SECRET: 'google-secret',
+    GMAIL_CLIENT_ID: 'gmail', GMAIL_CLIENT_SECRET: 'gmail-secret', ROSTER_SPREADSHEET_ID: 'sheet',
+    GITHUB_APP_ID: 'github', GITHUB_INSTALLATION_ID: 'installation' };
+  const original = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
+  writeFileSync(files.SERVER_CONFIG_FILE, JSON.stringify(server));
+  writeFileSync(files.GOOGLE_SERVICE_ACCOUNT_FILE, JSON.stringify({ client_email: 'bot@example.com', private_key: 'key' }));
+  writeFileSync(files.GITHUB_PRIVATE_KEY_FILE, 'private key\n');
+  writeFileSync(files.GMAIL_REFRESH_TOKEN_FILE, 'refresh token\n');
+  try {
+    for (const key of ['GOOGLE_SERVICE_ACCOUNT_JSON', 'GITHUB_PRIVATE_KEY', 'GMAIL_REFRESH_TOKEN']) delete process.env[key];
+    Object.assign(process.env, env);
+    const config = loadConfig();
+    assert.equal(config.googleServiceAccount.client_email, 'bot@example.com');
+    assert.equal(config.githubPrivateKey, 'private key');
+    assert.equal(config.gmailRefreshToken, 'refresh token');
+  } finally {
+    for (const [key, value] of Object.entries(original)) value === undefined ? delete process.env[key] : process.env[key] = value;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('commands use interaction roles and cancellation preserves a claimed action', async () => {

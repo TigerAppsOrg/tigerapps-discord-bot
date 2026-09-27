@@ -11,7 +11,7 @@ Onboards new TigerApps Discord members from the Clean roster and provides Board 
 
 ## Requirements
 
-Node.js 20+ and persistent private storage. For the desktop pilot, route `https://api.tigerapps.org` through the dedicated Cloudflare Tunnel to `http://localhost:3000`, set `PUBLIC_BASE_URL=https://api.tigerapps.org`, and run one process while the computer is on. Register that stable HTTPS origin for member OAuth; the separate one-time mailbox authorization script uses localhost. A 24/7 deployment needs a host later. Account links, OAuth attempts, and announcement confirmations are stored in `data/state.json`, so keep that file when moving hosts.
+Node.js 20+ and persistent private storage. Cloudflare routes `https://api.tigerapps.org` through the dedicated tunnel to the bot's local port. Set `PUBLIC_BASE_URL=https://api.tigerapps.org`; the separate one-time mailbox authorization script uses localhost. Run one bot process: account links, OAuth attempts, and announcement confirmations are stored in `data/state.json`.
 
 1. **Discord:** Use the existing TigerApps application. Enable **Server Members Intent**. Install it with `bot` and `applications.commands`, Manage Roles, View Channels, Send Messages, and Read Message History. Put its highest role below `Board` and above every role it will assign or remove, including `Team Lead`. Do not grant Administrator. Register the Discord OAuth redirect `${PUBLIC_BASE_URL}/auth/discord`.
 2. **Google:** Use a web OAuth client for Princeton member sign-in with `${PUBLIC_BASE_URL}/auth/google` as its redirect URI. Its audience must allow Princeton accounts; it requests only `openid email`. Enable the Sheets API and share the roster workbook with a dedicated service account as **Editor**. Use a separate OAuth client for the TigerApps mailbox with `http://localhost:3741/callback` as its redirect URI and enable the Gmail API. Authorize `it.admin@princetonusg.com` once for `gmail.send` using `npm run authorize-mail`; this writes `data/gmail-refresh-token` with private file permissions. A mailbox client left in Google's external Testing mode can have a seven-day refresh token, so publish/verify it or use an eligible internal Workspace project before relying on scheduled mail. Do not paste tokens into chat.
@@ -32,7 +32,7 @@ Node.js 20+ and persistent private storage. For the desktop pilot, route `https:
 
 ## Configuration
 
-Set these through your host's secret/environment manager. `GOOGLE_SERVICE_ACCOUNT_JSON` is the service account's full JSON content; `GITHUB_PRIVATE_KEY` is the app's PEM key. For local development, Node 20 can read an ignored `.env` with `node --env-file=.env src/index.js`.
+Set these through the host's private environment file. The Google service-account JSON and GitHub App PEM can be supplied as inline values or by private file paths. On EC2, the environment file, credential files, Discord map, and state live on encrypted EBS. For local development, Node 20 can read an ignored `.env` with `node --env-file=.env src/index.js`.
 
 | Variable | Purpose |
 | --- | --- |
@@ -40,12 +40,12 @@ Set these through your host's secret/environment manager. `GOOGLE_SERVICE_ACCOUN
 | `PUBLIC_BASE_URL`, `PORT` | HTTPS callback origin and local listener port |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Princeton member sign-in OAuth client |
 | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` | Separate TigerApps mailbox OAuth client |
-| `GOOGLE_SERVICE_ACCOUNT_JSON`, `ROSTER_SPREADSHEET_ID` | Live Clean roster access |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` or `GOOGLE_SERVICE_ACCOUNT_FILE`, `ROSTER_SPREADSHEET_ID` | Live Clean roster access |
 | `GMAIL_REFRESH_TOKEN` or `GMAIL_REFRESH_TOKEN_FILE` | Send from `it.admin@princetonusg.com` |
-| `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, `GITHUB_PRIVATE_KEY` | GitHub organization invitations and removals |
+| `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, `GITHUB_PRIVATE_KEY` or `GITHUB_PRIVATE_KEY_FILE` | GitHub organization invitations and removals |
 | `SERVER_CONFIG_FILE`, `DATA_FILE` | Optional paths; default to `server.json` and `data/state.json` |
 
-Run `npm ci`, `npm test`, then `node --env-file=.env src/index.js` for the local pilot. `/health` returns 200 when the Discord client is connected. Start the bot only after the intended roles, channels, and permissions have been tested. The bot registers its six guild commands and posts one onboarding panel on first startup.
+Run `npm ci` and `npm test` before installing the bot. The [systemd units](deploy/) run the bot and Cloudflare Tunnel on EC2. `/health` returns 200 when the Discord client is connected. Start the bot only after the intended roles, channels, and permissions have been tested. The bot registers its six guild commands and posts one onboarding panel on first startup.
 
 For local mailbox authorization, set `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET`, run `npm run authorize-mail`, open the printed Google URL yourself, and sign in as `it.admin@princetonusg.com`. Keep the resulting ignored file private.
 

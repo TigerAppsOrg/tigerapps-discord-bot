@@ -1,6 +1,6 @@
 # TigerApps Discord bot architecture
 
-The bot runs as one Node.js process on the TigerApps bot host. Cloudflare serves `api.tigerapps.org` over HTTPS and forwards member sign-in callbacks through the `tigerapps-discord-bot` tunnel to port 3000. The Discord connection uses Gateway, so the host does not need a public Discord interaction endpoint. During the local deployment, the host is a Mac; the same hostname can point to an always-on host later.
+The bot runs as one Node.js service on the `TigerApps-Combined` EC2 instance. Cloudflare serves `api.tigerapps.org` over HTTPS and forwards member sign-in callbacks through the `tigerapps-discord-bot` tunnel to port 3100 on that instance. The Discord connection uses Gateway, so the host does not need a public Discord interaction endpoint.
 
 ## Hosting and services
 
@@ -8,9 +8,11 @@ The bot runs as one Node.js process on the TigerApps bot host. Cloudflare serves
 | --- | --- | --- |
 | Discord application and guild | Discord | Gateway events, slash commands, roles, channels |
 | `api.tigerapps.org` | Cloudflare DNS and edge | Public HTTPS origin for member OAuth |
-| `tigerapps-discord-bot` tunnel | Cloudflare plus a connector on the bot host | Forward HTTPS to `http://localhost:3000` |
-| Node.js bot and OAuth listener | Bot host, port 3000 | Discord Gateway connection, callbacks, command handling |
-| `.env`, `server.json`, `data/state.json` | Private storage on the bot host | Credentials, Discord ID map, account links and action state |
+| `tigerapps-discord-bot` tunnel | Cloudflare plus `cloudflared` on EC2 | Forward HTTPS to `http://localhost:3100` |
+| Node.js bot and OAuth listener | `TigerApps-Combined` EC2, loopback port 3100 | Discord Gateway connection, callbacks, command handling |
+| Bot code | `/opt/tigerapps-discord-bot` on EC2 | Installed application and dependencies |
+| `.env`, `server.json`, `data/state.json` | Encrypted EBS volume at `/var/lib/tigerapps-discord-bot` | Credentials, Discord ID map, account links and action state |
+| Deployment archives | Private, encrypted `tigerapps-discord-bot-deploy-104733724423-us-east-1` S3 bucket | Commit-specific code archives for host updates |
 | Clean roster workbook | Google Sheets | Member allowlist and `Status Review` flag |
 | Google OAuth clients | Google Auth Platform | Princeton member sign-in and TigerApps mailbox authorization |
 | TigerApps mailbox | Gmail | `/announce` email delivery |
@@ -21,20 +23,27 @@ The bot runs as one Node.js process on the TigerApps bot host. Cloudflare serves
 ```mermaid
 flowchart LR
   Member[Discord member] --> Guild[TigerApps Discord server]
-  Guild <-->|Gateway events and interactions| Bot[Single Node.js bot process]
   Member -->|Browser sign-in| Edge[Cloudflare api.tigerapps.org]
-  Edge --> Tunnel[Cloudflare Tunnel connector]
-  Tunnel -->|HTTP localhost:3000| Bot
+  subgraph EC2["TigerApps-Combined EC2"]
+    Tunnel[cloudflared connector]
+    Bot[Node.js bot on loopback port 3100]
+    State[(Encrypted EBS state and credentials)]
+    Tunnel -->|HTTP localhost:3100| Bot
+    Bot --> State
+  end
+  Guild <-->|Gateway events and interactions| Bot
+  Edge --> Tunnel
   Bot -->|Discord identity OAuth| DiscordOAuth[Discord OAuth2]
   Bot -->|Princeton identity OAuth| GoogleOAuth[Google Auth Platform]
   Bot -->|Read roster and flag Status Review| Sheets[Clean Google Sheet]
   Bot -->|Send confirmed announcements| Gmail[TigerApps Gmail API]
   Bot -->|Invite or remove org members| GitHub[TigerAppsOrg GitHub App API]
-  Bot --> State[(Local state.json)]
-  Bot --> Config[Local .env and server.json]
+  Archive[(Private S3 deploy archive)] -.->|Install code| Bot
 ```
 
 Discord interactions arrive through the Gateway connection, so there is no Discord Interactions Endpoint URL. The GitHub App makes outbound API calls on commands and does not subscribe to webhooks, so its webhook can be inactive. The HTTP listener exposes only `/auth/*` callbacks and `/health`; `/health` returns 200 only when the Discord client is ready.
+
+Two systemd units keep the bot and tunnel running after reboot: [`tigerapps-discord-bot.service`](../deploy/tigerapps-discord-bot.service) and [`tigerapps-discord-tunnel.service`](../deploy/tigerapps-discord-tunnel.service). The tunnel token and bot credentials are stored on encrypted EBS; neither is placed in a unit file or repository.
 
 ## Member onboarding
 
@@ -118,7 +127,7 @@ The roster service account receives Editor sharing on the specific workbook so i
 
 ## Persistence and recovery
 
-The bot uses one process and an atomically replaced local `data/state.json` for account links, pending OAuth attempts, action confirmations, the onboarding panel ID, and the rollout cutoff. Running multiple replicas against this file is unsupported. Back up and transfer this file before moving hosts; losing it breaks existing account links and changes how the first-rollout cutoff is interpreted. Keep `.env`, `server.json`, the state file, service-account JSON, Gmail refresh token, GitHub private key, and Cloudflare connector credentials out of Git and out of this document.
+The bot uses one process and an atomically replaced local `data/state.json` for account links, pending OAuth attempts, action confirmations, the onboarding panel ID, and the rollout cutoff. Running multiple replicas against this file is unsupported. The state and credentials live on a dedicated encrypted EBS volume. Back up and transfer the state file before moving hosts; losing it breaks existing account links and changes how the first-rollout cutoff is interpreted. Keep `.env`, `server.json`, the state file, service-account JSON, Gmail refresh token, GitHub private key, and Cloudflare connector credentials out of Git and out of this document.
 
 Startup validates mapped Discord roles, channels, hierarchy, and send permissions before registering commands or posting the onboarding panel. A failed validation should be fixed at the source mapping or Discord permission, then the process restarted. `/remove` and `/resign` flag the roster but leave Board to update membership rows; a person still on the Clean roster can otherwise regain access by onboarding or invitation.
 
