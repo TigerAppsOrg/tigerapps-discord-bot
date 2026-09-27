@@ -45,7 +45,10 @@ test('mail hides recipients and rejects header injection', () => {
   const raw = Buffer.from(mailMessage({ subject: 'All hands', body: 'Hello', to: 'lead@princeton.edu',
     cc: 'it.admin@princetonusg.com', bcc: ['a@princeton.edu', 'b@princeton.edu'] }), 'base64url').toString();
   assert.match(raw, /Cc: it\.admin@princetonusg\.com/);
-  assert.match(raw, /Bcc: a@princeton\.edu, b@princeton\.edu/);
+  assert.match(raw, /Bcc: a@princeton\.edu,\r\n b@princeton\.edu/);
+  const many = Buffer.from(mailMessage({ subject: 'All hands', body: 'Hello', to: 'lead@princeton.edu',
+    bcc: Array.from({ length: 60 }, (_, i) => `member${i}@princeton.edu`) }), 'base64url').toString();
+  assert.ok(many.split('\r\n\r\n')[0].split('\r\n').every(line => Buffer.byteLength(line) <= 998));
   assert.throws(() => mailMessage({ subject: 'News', body: 'x', to: 'bad@example.com\r\nBcc: attacker@example.com', bcc: ['a@princeton.edu'] }), /Invalid email/);
   assert.deepEqual(announcementRecipients([{ team: 'TigerOps, The Forum', email: 'a@princeton.edu' }, { team: 'The Forum', email: 'b@princeton.edu' }], 'TigerOps'), ['a@princeton.edu']);
 });

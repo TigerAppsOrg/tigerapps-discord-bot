@@ -277,6 +277,7 @@ export function createBot(config, state, roster, github, mailer) {
     if (!action || action.actorId !== interaction.user.id || action.status !== 'input' || action.expiresAt < Date.now()) {
       await interaction.reply({ flags: ephemeral, content: 'That announcement expired. Run /announce again.' }); return;
     }
+    await interaction.deferReply({ flags: ephemeral });
     const actor = await currentMember(interaction.user.id);
     if (!isBoard(actor) && (!isLead(actor) || !leadsFor(actor).includes(action.team))) throw new Error('Announcement access changed.');
     const subject = interaction.fields.getTextInputValue('subject').trim();
@@ -293,7 +294,7 @@ export function createBot(config, state, roster, github, mailer) {
       });
     });
     const destination = action.team ? `${action.team} team channel` : 'club announcements';
-    await interaction.reply({ flags: ephemeral, content: `Preview for ${destination} and ${recipients.length} hidden email recipients:\n\n**${subject}**\n${body}`, allowedMentions: { parse: [] }, components: confirmButtons(id) });
+    await interaction.editReply({ content: `Preview for ${destination} and ${recipients.length} hidden email recipients:\n\n**${subject}**\n${body}`, allowedMentions: { parse: [] }, components: confirmButtons(id) });
   }
 
   async function resign(actorId) {
@@ -441,7 +442,8 @@ export function createBot(config, state, roster, github, mailer) {
         'Your command access changed.', 'Announcement access changed.', 'Invalid role selection.',
       ].includes(error.message) || error.message.startsWith('Choose one of your teams:') ? error.message : 'That did not work. Please try again or ask Board for help.';
       try {
-        if (interaction.deferred || interaction.replied) await interaction.followUp({ flags: ephemeral, content: safe });
+        if (interaction.deferred && interaction.isModalSubmit()) await interaction.editReply({ content: safe, components: [] });
+        else if (interaction.deferred || interaction.replied) await interaction.followUp({ flags: ephemeral, content: safe });
         else await interaction.reply({ flags: ephemeral, content: safe });
       } catch { console.error('Could not report an interaction error to Discord.'); }
     }

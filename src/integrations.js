@@ -86,7 +86,7 @@ export function mailMessage({ subject, body, to, cc, bcc }) {
   const headers = [
     `From: TigerApps <${sender}>`, `To: ${address(to)}`,
     ...(cc ? [`Cc: ${address(cc)}`] : []),
-    `Bcc: ${bcc.map(address).join(', ')}`,
+    `Bcc: ${bcc.map(address).join(',\r\n ')}`,
     `Reply-To: ${address(to)}`,
     `Subject: =?UTF-8?B?${Buffer.from(safeSubject).toString('base64')}?=`,
     'MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8',
