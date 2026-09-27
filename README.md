@@ -11,7 +11,7 @@ Onboards new TigerApps Discord members from the Clean roster and provides Board 
 
 ## Requirements
 
-Node.js 20+, an always-on host with persistent private storage, and an HTTPS URL that forwards to the bot's `PORT`. Run one instance: account links, OAuth attempts, and announcement confirmations are stored atomically in `data/state.json`. A disposable serverless filesystem or multiple replicas will lose or conflict with that state.
+Node.js 20+ and persistent private storage. For a desktop pilot, use `PUBLIC_BASE_URL=http://localhost:3000` and run one process while your computer is on. Register the exact localhost redirects below; the browser must run on the same computer as the bot. A phone needs a reachable HTTPS URL, and 24/7 operation needs a host later. Account links, OAuth attempts, and announcement confirmations are stored in `data/state.json`, so keep that file when moving hosts.
 
 1. **Discord:** Use the existing TigerApps application. Enable **Server Members Intent**. Install it with `bot` and `applications.commands`, Manage Roles, View Channels, Send Messages, and Read Message History. Put its highest role below `Board` and above every role it will assign or remove, including `Team Lead`. Do not grant Administrator. Register the Discord OAuth redirect `${PUBLIC_BASE_URL}/auth/discord`.
 2. **Google:** Use a web OAuth client for Princeton member sign-in with `${PUBLIC_BASE_URL}/auth/google` as its redirect URI. Its audience must allow Princeton accounts; it requests only `openid email`. Enable the Sheets API and share the roster workbook with a dedicated service account as **Editor**. Use a separate OAuth client for the TigerApps mailbox with `http://localhost:3741/callback` as its redirect URI and enable the Gmail API. Authorize `it.admin@princetonusg.com` once for `gmail.send` using `npm run authorize-mail`; this writes `data/gmail-refresh-token` with private file permissions. A mailbox client left in Google's external Testing mode can have a seven-day refresh token, so publish/verify it or use an eligible internal Workspace project before relying on scheduled mail. Do not paste tokens into chat.
@@ -45,7 +45,7 @@ Set these through your host's secret/environment manager. `GOOGLE_SERVICE_ACCOUN
 | `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, `GITHUB_PRIVATE_KEY` | GitHub organization invitations and removals |
 | `SERVER_CONFIG_FILE`, `DATA_FILE` | Optional paths; default to `server.json` and `data/state.json` |
 
-Run `npm ci`, `npm test`, then `npm start`. `/health` returns 200 when the Discord client is connected. Start the bot only after the intended roles, channels, and permissions have been tested. The bot registers its six guild commands and posts one onboarding panel on first startup.
+Run `npm ci`, `npm test`, then `node --env-file=.env src/index.js` for the local pilot. `/health` returns 200 when the Discord client is connected. Start the bot only after the intended roles, channels, and permissions have been tested. The bot registers its six guild commands and posts one onboarding panel on first startup.
 
 For local mailbox authorization, set `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET`, run `npm run authorize-mail`, open the printed Google URL yourself, and sign in as `it.admin@princetonusg.com`. Keep the resulting ignored file private.
 
