@@ -475,10 +475,10 @@ export function createBot(config, state, roster, github, mailer) {
       ...Object.values(server.channels), ...Object.values(server.teams).map(team => team.channelId),
     ]) if (!guild.channels.cache.has(id)) throw new Error(`Configured Discord channel ${id} is missing.`);
     const me = await guild.members.fetchMe();
-    if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles) || me.permissions.has(PermissionsBitField.Flags.Administrator) ||
+    if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles) ||
         managedRoleIds(server).some(id => me.roles.highest.comparePositionTo(guild.roles.cache.get(id)) <= 0) ||
         guild.roles.cache.get(server.roles.board).comparePositionTo(me.roles.highest) <= 0) {
-      throw new Error('Place the bot above every managed role and below Board with Manage Roles, without Administrator.');
+      throw new Error('Place the bot above every managed role and below Board with Manage Roles.');
     }
     for (const id of [server.channels.startHere, server.channels.announcements, server.channels.boardLog,
       ...Object.values(server.teams).map(team => team.channelId)]) {
