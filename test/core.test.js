@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, validateServerConfig } from '../src/config.js';
-import { announcementPost, announcementPreview, createBot, roleChange } from '../src/bot.js';
+import { announcementPost, announcementPreview, assistedOnboardingDm, createBot, memberHeadshot, memberInfoCard, roleChange } from '../src/bot.js';
 import { Github, announcementRecipients, githubHandle, mailMessage } from '../src/integrations.js';
 import { verifiedPrincetonEmail } from '../src/oauth.js';
 import { Roster, parseRoster, rosterFunctions, rosterTeams } from '../src/roster.js';
@@ -61,7 +61,7 @@ test('announcement posts ping only the selected role', () => {
   const server = { roles: { member: 'club-role' }, teams: { TigerOps: { roleId: 'ops-role' }, 'The Forum': { roleId: 'forum-role' } } };
   const message = { subject: 'Update', body: 'Hello', team: 'The Forum' };
   assert.deepEqual(announcementPost(message, server), {
-    content: '**Update**\nHello\n\n<@&forum-role>', allowedMentions: { parse: [], roles: ['forum-role'] },
+    content: '**Update**\n\nHello\n\n<@&forum-role>', allowedMentions: { parse: [], roles: ['forum-role'] },
   });
   const clubPost = announcementPost({ ...message, team: null }, server);
   assert.match(clubPost.content, /<@&club-role>$/);
@@ -78,6 +78,33 @@ test('announcement previews fit Discord at the modal input limits', () => {
     assert.match(preview, /49 BCC emails/);
     assert.match(preview, /<#[24]{20}>/);
   }
+});
+
+test('member cards use a unique site headshot and show only allowed onboarding commands', () => {
+  const person = { name: 'Member A', year: '2028', team: 'TigerOps', role: 'SWE', email: 'a@princeton.edu', phone: '555-0100', github: 'https://github.com/member-a' };
+  const photos = [{ name: "Member A '28", headshot: '/_astro/member-a.abc.webp' }];
+  const photo = memberHeadshot(person, photos);
+  assert.equal(photo, 'https://tigerapps.org/_astro/member-a.abc.webp');
+  assert.equal(memberHeadshot(person, [{ ...photos[0], headshot: '/_astro/filler.abc.webp' }]), 'https://tigerapps.org/_astro/filler.abc.webp');
+  assert.equal(memberHeadshot(person, [...photos, ...photos]), null);
+  assert.equal(memberHeadshot(person, [{ ...photos[0], headshot: 'https://other.example/photo.webp' }]), null);
+  const embed = memberInfoCard(person, photo).toJSON();
+  assert.equal(embed.thumbnail.url, photo);
+  assert.equal(embed.fields.find(field => field.name === 'Phone').value, '555-0100');
+  assert.match(embed.fields.find(field => field.name === 'GitHub').value, /github.com\/member-a/);
+  const server = { roles: { board: 'board', teamLead: 'lead', member: 'member' }, teams: { TigerOps: { leadIds: ['lead-user'] } } };
+  const dm = (member, ordinaryAssigned = false) => assistedOnboardingDm(member, 'board-user', server, ordinaryAssigned).embeds[0].toJSON();
+  assert.match(dm({ id: 'ordinary', roles: { cache: new Set() } }, true).description, /verified.*\/info/s);
+  assert.doesNotMatch(dm({ id: 'ordinary', roles: { cache: new Set() } }, true).description, /\/remove/);
+  assert.match(dm({ id: 'lead-user', roles: { cache: new Set(['lead']) } }).description, /\/announce/);
+  assert.doesNotMatch(dm({ id: 'unmapped-lead', roles: { cache: new Set(['lead']) } }).description, /\/announce/);
+  assert.match(dm({ id: 'board-user', roles: { cache: new Set(['board']) } }).description, /\/remove/);
+  const owner = dm({ id: 'owner', roles: { cache: new Set() } });
+  assert.equal(owner.title, 'Your TigerApps account is linked');
+  assert.doesNotMatch(owner.description, /\/info|\/announce|\/github-invite|\/remove/);
+  const ownerMember = dm({ id: 'owner', roles: { cache: new Set(['member']) } });
+  assert.match(ownerMember.description, /\/info/);
+  assert.doesNotMatch(ownerMember.description, /\/remove/);
 });
 
 test('mail hides recipients and rejects header injection', () => {
@@ -200,11 +227,12 @@ test('command previews, audit logs, and cancellation guards', async () => {
   const state = new State(join(dir, 'state.json'));
   const rows = [{ name: 'Member A', email: 'a@princeton.edu', github: 'https://github.com/Member-A', team: 'TigerOps', role: 'SWE', year: '2028' }];
   const { client } = createBot({ baseUrl: 'http://localhost:3000', server: {
-    guildId: '1275140369457348638', roles: { board: 'board', teamLead: 'lead' },
+    guildId: '1275140369457348638', roles: { board: 'board', teamLead: 'lead', member: 'member' },
     channels: { startHere: 'channel' }, teams: { TigerOps: { roleId: 'team', channelId: 'channel', leadIds: [] } }, functions: {}, years: {},
   } }, state, { all: async () => rows, byEmail: async email => rows.find(row => row.email === email) }, {}, {});
   const logs = [];
-  client.channels.fetch = async () => ({ send: async message => { logs.push(message.content); } });
+  client.channels.fetch = async () => ({ send: async message => { logs.push(message.embeds[0].toJSON().description); } });
+  const display = message => message.content || message.embeds?.[0]?.toJSON().description || message.embeds?.[0]?.toJSON().title;
   const base = { guildId: '1275140369457348638', user: { id: 'user' },
     isModalSubmit: () => false, isStringSelectMenu: () => false };
   const emit = interaction => new Promise(resolve => client.emit('interactionCreate', {
@@ -214,16 +242,40 @@ test('command previews, audit logs, and cancellation guards', async () => {
   try {
     state.update(data => { data.actions.claimed = { actorId: 'user', status: 'executing', expiresAt: Date.now() + 60_000 }; });
     const denied = await emit({ isButton: () => true, customId: 'cancel:claimed' });
-    assert.match(denied.content, /already started/);
+    assert.match(display(denied), /check its result/);
     assert.equal(state.get().actions.claimed.status, 'executing');
     const selfOnboard = await emit({ isChatInputCommand: () => true, commandName: 'onboard',
       options: { getUser: () => null, getString: () => null } });
-    assert.match(selfOnboard.content, /Were you accepted/);
+    assert.match(display(selfOnboard), /Were you accepted/);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: true, json: async () => [{ name: "Member A '28", headshot: '/_astro/member-a.abc.webp' }] });
+    try {
+      const info = await emit({ isChatInputCommand: () => true, commandName: 'info',
+        inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['member']) } },
+        options: { getUser: () => null, getString: () => 'a@princeton.edu' } });
+      assert.equal(info.embeds[0].toJSON().thumbnail.url, 'https://tigerapps.org/_astro/member-a.abc.webp');
+      state.link('google-member-a', 'a@princeton.edu', 'target');
+      globalThis.fetch = async () => ({ ok: false });
+      client.users.fetch = async () => ({ displayAvatarURL: () => 'https://cdn.discordapp.com/avatars/target/photo.webp' });
+      const fallback = await emit({ isChatInputCommand: () => true, commandName: 'info',
+        inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['member']) } },
+        options: { getUser: () => null, getString: () => 'a@princeton.edu' } });
+      assert.equal(fallback.embeds[0].toJSON().thumbnail.url, 'https://cdn.discordapp.com/avatars/target/photo.webp');
+      const originalError = console.error;
+      try {
+        console.error = () => {};
+        const guest = await emit({ isChatInputCommand: () => true, commandName: 'info',
+          inCachedGuild: () => true, member: { id: 'guest', roles: { cache: new Set(['guest']) } },
+          options: { getUser: () => null, getString: () => 'a@princeton.edu' } });
+        assert.match(display(guest), /Only TigerApps members/);
+      } finally { console.error = originalError; }
+    } finally { globalThis.fetch = originalFetch; }
     const boardOnboard = await emit({ isChatInputCommand: () => true, commandName: 'onboard',
       inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } }, guild: { ownerId: 'owner' },
       options: { getUser: () => ({ id: 'target', bot: false }), getString: () => 'a@princeton.edu',
         getMember: () => ({ id: 'target', roles: { cache: new Set() } }) } });
-    assert.match(boardOnboard.content, /Assign roles: TigerApps, TigerOps/);
+    assert.equal(boardOnboard.embeds[0].toJSON().title, 'Onboard Member A');
+    assert.equal(boardOnboard.embeds[0].toJSON().fields.find(field => field.name === 'Team').value, 'TigerOps');
     assert.ok(Object.values(state.get().actions).some(action => action.type === 'onboard-member' && action.targetId === 'target'));
     const modal = await emit({ isChatInputCommand: () => true, commandName: 'announce',
       inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
@@ -236,12 +288,12 @@ test('command previews, audit logs, and cancellation guards', async () => {
     const invite = await emit({ isChatInputCommand: () => true, commandName: 'github-invite',
       inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
       options: { getString: name => name === 'username' ? 'member-a' : null } });
-    assert.match(invite.content, /Invite Member A/);
+    assert.match(invite.embeds[0].toJSON().title, /Invite Member A/);
     assert.ok(Object.values(state.get().actions).some(action => action.type === 'github-invite' && action.email === 'a@princeton.edu'));
     const emailInvite = await emit({ isChatInputCommand: () => true, commandName: 'github-invite',
       inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
       options: { getString: name => name === 'email' ? 'a@princeton.edu' : null } });
-    assert.match(emailInvite.content, /Invite Member A/);
+    assert.match(emailInvite.embeds[0].toJSON().title, /Invite Member A/);
     rows.push({ name: 'Member B', email: 'b@princeton.edu', github: 'Member-A' });
     const originalError = console.error;
     try {
@@ -249,11 +301,56 @@ test('command previews, audit logs, and cancellation guards', async () => {
       const ambiguous = await emit({ isChatInputCommand: () => true, commandName: 'github-invite',
         inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
         options: { getString: name => name === 'username' ? 'member-a' : null } });
-      assert.match(ambiguous.content, /must match one Clean-roster member/);
+      assert.match(display(ambiguous), /must match one Clean-roster member/);
     } finally { console.error = originalError; }
     await new Promise(resolve => setImmediate(resolve));
     assert.ok(logs.some(message => message.includes('invoked /onboard')));
     assert.ok(logs.some(message => message.includes('invoked /announce')));
     assert.ok(logs.some(message => message.includes('invoked /github-invite')));
+  } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Board-assisted onboarding assigns roles before sending its member DM', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tigerapps-board-onboard-'));
+  const state = new State(join(dir, 'state.json'));
+  const person = { name: 'Member A', email: 'a@princeton.edu', team: 'TigerOps', role: 'SWE', year: '2028' };
+  const server = { guildId: 'guild', roles: { guest: 'guest', member: 'member', alumni: 'alumni', teamLead: 'lead', board: 'board' },
+    channels: { startHere: 'start', publicChat: 'public', announcements: 'announcements', boardLog: 'log' },
+    teams: { TigerOps: { roleId: 'team', channelId: 'team-channel', leadIds: [] } }, functions: {}, years: {} };
+  const { client } = createBot({ baseUrl: 'http://localhost:3000', server }, state,
+    { all: async () => [person], byEmail: async () => person }, {}, {});
+  const logs = [];
+  let assigned, dm, reply;
+  const channel = { isTextBased: () => true, permissionsFor: () => ({ has: () => true }),
+    send: async message => { if (message.embeds) logs.push(message.embeds[0].toJSON().description); return { id: 'panel' }; } };
+  const role = { comparePositionTo: () => 1 };
+  const guild = { id: 'guild', ownerId: 'owner', roles: { cache: new Map([
+    ['board', role], ...['guest', 'member', 'alumni', 'lead', 'team'].map(id => [id, {}])]), fetch: async () => {} },
+  channels: { cache: new Map(Object.values(server.channels).concat('team-channel').map(id => [id, channel])), fetch: async () => {} },
+  commands: { set: async () => {} } };
+  const target = { id: 'target', guild, user: { bot: false, send: async message => { dm = message; } }, roles: {
+    cache: new Map([['guild', {}], ['guest', {}]]), set: async ids => { assigned = ids; },
+  } };
+  const actor = { id: 'actor', guild, roles: { cache: new Map([['board', {}]]) } };
+  guild.members = { fetchMe: async () => ({ permissions: { has: () => true }, roles: { highest: role } }),
+    fetch: async ({ user }) => user === 'target' ? target : actor };
+  client.guilds.fetch = async () => guild;
+  client.channels.fetch = async () => channel;
+  try {
+    client.emit('clientReady');
+    for (let i = 0; i < 20 && !state.get().panelId; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(state.get().panelId, 'panel');
+    state.update(data => { data.actions.board = { type: 'onboard-member', actorId: 'actor', targetId: 'target',
+      email: person.email, roster: [person.team, person.role, person.year], boardTarget: false,
+      status: 'ready', expiresAt: Date.now() + 60_000 }; });
+    client.emit('interactionCreate', { guildId: 'guild', user: { id: 'actor' }, customId: 'confirm:board',
+      isChatInputCommand: () => false, isModalSubmit: () => false, isStringSelectMenu: () => false,
+      isButton: () => true, deferUpdate: async () => {}, editReply: async message => { reply = message; } });
+    for (let i = 0; i < 20 && !reply; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.deepEqual(new Set(assigned), new Set(['member', 'team']));
+    assert.equal(state.linkedByDiscord('target').email, person.email);
+    assert.match(dm.embeds[0].toJSON().description, /<@actor>.*\/info/s);
+    assert.match(reply.embeds[0].toJSON().description, /DM sent/);
+    assert.ok(logs.some(message => message.includes('onboarded <@target>')));
   } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
 });

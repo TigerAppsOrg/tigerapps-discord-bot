@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
+import { EmbedBuilder } from 'discord.js';
 import { OAuth2Client } from 'google-auth-library';
 
 const lifetime = 15 * 60 * 1000;
@@ -99,7 +100,9 @@ export function createOAuth(config, state, roster, client, boardNotice) {
         } catch { /* The member can use /onboard for the next step. */ }
         page(response, 200, next, discordLink, true);
         void boardNotice(`<@${attempt.discordId}> linked Princeton account ${email}.`);
-        try { await (await client.users.fetch(attempt.discordId)).send(`${next} ${discordLink}`); } catch { /* DMs may be closed. */ }
+        try { await (await client.users.fetch(attempt.discordId)).send({ embeds: [new EmbedBuilder()
+          .setColor(0x3ee0bf).setTitle('Welcome to TigerApps')
+          .setDescription(`${next}\n\n[Continue in Discord](${discordLink})`)] }); } catch { /* DMs may be closed. */ }
       } else {
         page(response, 400, 'This sign-in step is no longer valid. Start again in Discord.', discordLink);
       }

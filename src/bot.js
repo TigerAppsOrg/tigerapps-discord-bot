@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, Events, GatewayIntentBits,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits,
   MessageFlags, ModalBuilder, PermissionsBitField, SlashCommandBuilder,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
@@ -10,10 +10,22 @@ import { createOAuth } from './oauth.js';
 import { rosterFunctions, rosterTeams } from './roster.js';
 
 const ephemeral = MessageFlags.Ephemeral;
+const accent = 0x3ee0bf;
 const nonce = () => randomBytes(16).toString('hex');
 const row = (...components) => new ActionRowBuilder().addComponents(...components);
 const button = (id, label, style = ButtonStyle.Primary) => new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);
 const digest = emails => createHash('sha256').update(emails.join('\n')).digest('hex');
+const card = (title, description, color = accent) => ({ content: null,
+  embeds: [new EmbedBuilder().setColor(color).setTitle(title).setDescription(description)] });
+const field = (name, value, missing = 'Not listed') => ({ name, value: String(value || missing).slice(0, 1024), inline: true });
+
+function rolesCard(title, description, chosen) {
+  return new EmbedBuilder().setColor(accent).setTitle(title.slice(0, 256)).setDescription(description).addFields(
+    field('Team', chosen.teams.join(', '), 'None'),
+    field('Role', chosen.functions.join(', '), 'None'),
+    field('Class year', chosen.year, 'None'),
+  );
+}
 
 function select(id, label, names, selected, multiple = true) {
   const options = [['none', `No ${label.toLowerCase()} yet`], ...names.map(name => [name, name])];
@@ -29,7 +41,7 @@ function choiceMessage(config, chosen) {
   const functions = Object.keys(config.server.functions);
   const years = Object.keys(config.server.years);
   return {
-    content: `Confirm your roles.\nTeam: ${chosen.teams.join(', ') || 'None'}\nRole: ${chosen.functions.join(', ') || 'None'}\nYear: ${chosen.year || 'None'}\nYour choices determine ordinary channel access.`,
+    content: null, embeds: [rolesCard('Confirm your roles', 'Your choices set your channel access.', chosen)],
     components: [
       select('onboard:teams', 'Team', teams, chosen.teams),
       select('onboard:functions', 'Role', functions, chosen.functions),
@@ -41,13 +53,54 @@ function choiceMessage(config, chosen) {
 
 export function announcementPost(action, server) {
   const roleId = action.team ? server.teams[action.team].roleId : server.roles.member;
-  return { content: `**${action.subject}**\n${action.body}\n\n<@&${roleId}>`,
+  return { content: `**${action.subject}**\n\n${action.body}\n\n<@&${roleId}>`,
     allowedMentions: { parse: [], roles: [roleId] } };
 }
 
 export function announcementPreview(action, server, recipients) {
   const channelId = action.team ? server.teams[action.team].channelId : server.channels.announcements;
   return `Preview · <#${channelId}> · ${recipients} BCC emails\n\n${announcementPost(action, server).content}`;
+}
+
+export function memberHeadshot(person, members) {
+  if (!person.name || !person.year) return null;
+  const name = `${person.name.trim()} '${person.year.slice(-2)}`.toLowerCase();
+  const matches = Array.isArray(members) ? members.filter(member => member.name?.toLowerCase() === name &&
+    /^\/_astro\/[\w.-]+\.webp$/.test(member.headshot)) : [];
+  return matches.length === 1 ? `https://tigerapps.org${matches[0].headshot}` : null;
+}
+
+export function memberInfoCard(person, photo) {
+  const github = githubHandle(person.github);
+  const embed = new EmbedBuilder().setColor(accent).setTitle((person.name || person.email).slice(0, 256)).addFields(
+    field('Team', person.team),
+    field('Role', person.role),
+    field('Class year', person.year),
+    field('GitHub', github ? `[${github}](https://github.com/${github})` : person.github),
+    field('Email', person.email),
+    field('Phone', person.phone),
+  );
+  if (photo) embed.setThumbnail(photo);
+  return embed;
+}
+
+export function assistedOnboardingDm(member, actorId, server, ordinaryAssigned = false) {
+  const lead = member.roles.cache.has(server.roles.teamLead);
+  const teams = Object.values(server.teams).filter(team => team.leadIds.includes(member.id));
+  let title = 'Your TigerApps account is linked';
+  let help = 'Ask Board to check your Discord roles if you need member access.';
+  if (member.roles.cache.has(server.roles.board)) {
+    title = 'Your TigerApps access is ready';
+    help = 'As a Board member, you can use `/info` for member details, `/announce` for team or club updates, `/github-invite` for organization invites, `/onboard member email` to set up others, and `/remove` to revoke access.';
+  } else if (lead) {
+    title = 'Your TigerApps access is ready';
+    help = `As a Team Lead, you can use \`/info\` and \`/github-invite\`${teams.length ? ', plus `/announce` for your team.' : '.'}`;
+  } else if (ordinaryAssigned || member.roles.cache.has(server.roles.member)) {
+    title = 'Your TigerApps access is ready';
+    help = 'Your TigerApps channels are ready. Use `/info` to look up members.';
+  }
+  return { embeds: [new EmbedBuilder().setColor(accent).setTitle(title)
+    .setDescription(`<@${actorId}> verified your membership.\n\n${help}`)], allowedMentions: { parse: [] } };
 }
 
 function commands(config) {
@@ -86,7 +139,7 @@ export function createBot(config, state, roster, github, mailer) {
   async function boardNotice(message) {
     try {
       const channel = await client.channels.fetch(server.channels.boardLog);
-      await channel.send({ content: message.slice(0, 1900), allowedMentions: { parse: [] } });
+      await channel.send({ ...card('Bot activity', message.slice(0, 1900), 0x2b3e50), allowedMentions: { parse: [] } });
       return true;
     } catch {
       console.error('Board notice delivery failed.');
@@ -128,19 +181,19 @@ export function createBot(config, state, roster, github, mailer) {
   async function startHere(interaction) {
     const link = state.linkedByDiscord(interaction.user.id);
     if (!link) {
-      await interaction.reply({ flags: ephemeral, content: 'Were you accepted into TigerApps, or are you visiting as a guest?',
+      await interaction.reply({ flags: ephemeral, ...card('Welcome to TigerApps', 'Were you accepted into TigerApps, or are you visiting as a guest?'),
         components: [row(button('onboard:accepted', 'Accepted'), button('onboard:guest', 'Guest', ButtonStyle.Secondary))] });
       return;
     }
     await interaction.deferReply({ flags: ephemeral });
     const person = await roster.byEmail(link.email);
     if (!person) {
-      await interaction.editReply({ content: `Your Princeton email is not on the current roster. Ask a lead in <#${server.channels.publicChat}>.` });
+      await interaction.editReply(card('Roster match needed', `Your Princeton email is not on the current roster. Ask a lead in <#${server.channels.publicChat}>.`, 0xe19a35));
       return;
     }
     const member = interaction.inCachedGuild() ? interaction.member : await currentMember(interaction.user.id);
     if (!member.joinedTimestamp || member.joinedTimestamp < state.get().rolloutStartedAt) {
-      await interaction.editReply({ content: "You've been verified in the TigerApps discord! You should have access to the correct roles and permissions; feel free to contact leadership if anything is off :)" });
+      await interaction.editReply(card('Your account is linked', "You've been verified in the TigerApps discord! You should have access to the correct roles and permissions; feel free to contact leadership if anything is off :)"));
       return;
     }
     const chosen = { ...rosterChoices(person), status: 'ready', expiresAt: Date.now() + 15 * 60_000 };
@@ -151,7 +204,7 @@ export function createBot(config, state, roster, github, mailer) {
   async function selection(interaction) {
     const chosen = state.get().onboarding[interaction.user.id];
     if (!chosen || chosen.status !== 'ready' || chosen.expiresAt < Date.now()) {
-      await interaction.reply({ flags: ephemeral, content: 'This setup expired. Run /onboard again.' }); return;
+      await interaction.reply({ flags: ephemeral, ...card('Setup expired', 'Run `/onboard` again.', 0xe19a35) }); return;
     }
     const type = interaction.customId.slice('onboard:'.length);
     const selected = interaction.values.filter(value => value !== 'none');
@@ -167,26 +220,26 @@ export function createBot(config, state, roster, github, mailer) {
     const chosen = state.get().onboarding[interaction.user.id];
     const link = state.linkedByDiscord(interaction.user.id);
     if (!chosen || chosen.status !== 'ready' || chosen.expiresAt < Date.now() || !link) {
-      await interaction.update({ content: 'This setup expired. Run /onboard again.', components: [] }); return;
+      await interaction.update({ ...card('Setup expired', 'Run `/onboard` again.', 0xe19a35), components: [] }); return;
     }
     const claimed = state.update(data => {
       if (data.onboarding[interaction.user.id]?.status !== 'ready') return false;
       data.onboarding[interaction.user.id].status = 'executing';
       return true;
     });
-    if (!claimed) { await interaction.reply({ flags: ephemeral, content: 'This setup is already running.' }); return; }
+    if (!claimed) { await interaction.reply({ flags: ephemeral, ...card('Setup in progress', 'This setup is already running.') }); return; }
     await interaction.deferUpdate();
     const person = await roster.byEmail(link.email);
-    if (!person) { await interaction.editReply({ content: 'You are no longer on the Clean roster. Ask a lead for help.', components: [] }); return; }
+    if (!person) { await interaction.editReply({ ...card('Roster match needed', 'You are no longer on the Clean roster. Ask a lead for help.', 0xe19a35), components: [] }); return; }
     const member = await currentMember(interaction.user.id);
     if (isBoard(member) || member.id === guild.ownerId) {
-      await interaction.editReply({ content: 'Your Princeton account is linked. The server owner manages Board roles.', components: [] }); return;
+      await interaction.editReply({ ...card('Account linked', 'The server owner manages Board roles.'), components: [] }); return;
     }
     try {
       await setOrdinaryRoles(member, chosen);
     } catch {
       await boardNotice(`Could not finish ordinary role assignment for <@${member.id}>. Check the current role mapping and hierarchy.`);
-      await interaction.editReply({ content: 'Your role setup needs Board help. Please ask in the public chat.', components: [] });
+      await interaction.editReply({ ...card('Role setup needs help', 'Please ask Board in the public chat.', 0xe19a35), components: [] });
       return;
     }
     state.update(data => { delete data.onboarding[interaction.user.id]; });
@@ -202,12 +255,13 @@ export function createBot(config, state, roster, github, mailer) {
       try {
         const mentions = [member.id, ...team.leadIds];
         await (await client.channels.fetch(team.channelId)).send({
-          content: `<@${member.id}> selected ${name}, which differs from the Clean roster. ${team.leadIds.map(id => `<@${id}>`).join(' ')} Please review the assignment.`,
+          ...card('Team assignment to review', `${name} was selected during onboarding, but the Clean roster lists a different team.`, 0xe19a35),
+          content: mentions.map(id => `<@${id}>`).join(' '),
           allowedMentions: { users: mentions },
         });
       } catch { await boardNotice(`Could not post the team-selection notice for <@${member.id}> in ${name}.`); }
     }
-    await interaction.editReply({ content: `You're set. See <#${server.channels.announcements}> and your selected team channels.`, components: [] });
+    await interaction.editReply({ content: null, embeds: [rolesCard(`Welcome, ${person.name}`, `You're set. See <#${server.channels.announcements}> and your selected team channels.`, chosen)], components: [] });
     void boardNotice(`<@${member.id}> completed onboarding as ${link.email}.`);
   }
 
@@ -240,17 +294,19 @@ export function createBot(config, state, roster, github, mailer) {
       }
       const chosen = rosterChoices(person);
       const boardTarget = isBoard(member) || member.id === interaction.guild.ownerId;
-      const roles = ['TigerApps', ...chosen.teams, ...chosen.functions, ...(chosen.year ? [chosen.year] : [])].join(', ');
       const id = saveAction(interaction.user.id, { type: 'onboard-member', targetId: target.id, email,
         roster: [person.team, person.role, person.year], boardTarget });
-      await interaction.editReply({ content: `Onboard <@${target.id}> as ${person.name} (${email})?\n${boardTarget ? 'Existing Board roles stay unchanged.' : `Assign roles: ${roles}`}`,
-        allowedMentions: { parse: [] }, components: confirmButtons(id) });
+      await interaction.editReply({ content: null, embeds: [rolesCard(`Onboard ${person.name}`,
+        `<@${target.id}> · ${email}\n${boardTarget ? 'Discord roles stay unchanged.' : 'Assign these roles?'}`, chosen)],
+      allowedMentions: { parse: [] }, components: confirmButtons(id) });
       return;
     }
     if (!interaction.inCachedGuild()) throw new Error('Server member data unavailable. Try again.');
     const actor = interaction.member;
     if (interaction.commandName === 'info') {
-      if (!isBoard(actor) && !isLead(actor)) throw new Error('Only Board and Team Leads can use /info.');
+      if (!isBoard(actor) && !isLead(actor) && !actor.roles.cache.has(server.roles.member)) {
+        throw new Error('Only TigerApps members can use /info.');
+      }
       const selectedUser = interaction.options.getUser('member');
       const suppliedEmail = interaction.options.getString('email')?.trim().toLowerCase();
       if (Boolean(selectedUser) === Boolean(suppliedEmail)) throw new Error('Provide either a Discord member or one exact roster email.');
@@ -258,17 +314,24 @@ export function createBot(config, state, roster, github, mailer) {
       await interaction.deferReply({ flags: ephemeral });
       const person = email ? await roster.byEmail(email) : null;
       if (!person) throw new Error('No linked Clean-roster member found.');
-      await interaction.editReply({ allowedMentions: { parse: [] }, content: [
-        `Name: ${person.name}`, `Team: ${person.team}`, `Role: ${person.role}`, `Year: ${person.year}`,
-        `GitHub: ${person.github || 'Not listed'}`, `Email: ${person.email}`, `Phone: ${person.phone || 'Not listed'}`,
-      ].join('\n') });
+      let photo = null;
+      try {
+        const response = await fetch('https://tigerapps.org/members.json', { signal: AbortSignal.timeout(2500) });
+        if (response.ok) photo = memberHeadshot(person, await response.json());
+      } catch { /* Site photos are optional. */ }
+      if (!photo) {
+        const discordId = selectedUser?.id || Object.values(state.get().links).find(link => link.email === email)?.discordId;
+        const user = selectedUser || (discordId ? await client.users.fetch(discordId).catch(() => null) : null);
+        photo = user?.displayAvatarURL?.({ size: 256 });
+      }
+      await interaction.editReply({ allowedMentions: { parse: [] }, embeds: [memberInfoCard(person, photo)] });
       return;
     }
     if (interaction.commandName === 'resign') {
       if (isBoard(actor) || actor.id === guild.ownerId) throw new Error('The server owner must handle Board resignations.');
       if (!state.linkedByDiscord(actor.id)) throw new Error('Run /onboard and verify your Princeton account first.');
       const id = saveAction(actor.id, { type: 'resign' });
-      await interaction.reply({ flags: ephemeral, content: 'Move your current TigerApps roles to Alumni? Board will be notified. GitHub membership stays unchanged.', components: confirmButtons(id) });
+      await interaction.reply({ flags: ephemeral, ...card('Move to Alumni?', 'Your current TigerApps roles will be removed and Board will be notified. GitHub membership stays unchanged.'), components: confirmButtons(id) });
       return;
     }
     if (interaction.commandName === 'remove') {
@@ -283,7 +346,7 @@ export function createBot(config, state, roster, github, mailer) {
       let person = null;
       if (link) { try { person = await roster.byEmail(link.email); } catch { /* Preview can still show the Discord target. */ } }
       const id = saveAction(actor.id, { type: 'remove', targetId: target.id, reason, githubTarget: githubHandle(person?.github) });
-      await interaction.editReply({ content: `Remove ${target.username} from Discord club roles and attempt GitHub organization removal?\nGitHub target: ${githubHandle(person?.github) || 'not identified; Board follow-up may be needed'}\nReason: ${reason}\nRemoving GitHub membership also ends access to private forks.`, components: confirmButtons(id) });
+      await interaction.editReply({ ...card(`Remove ${target.username}?`, `Discord club roles and GitHub organization membership will be removed.\nGitHub: ${githubHandle(person?.github) || 'Board follow-up needed'}\nReason: ${reason}\nPrivate fork access also ends.`), components: confirmButtons(id) });
       return;
     }
     if (interaction.commandName === 'github-invite') {
@@ -299,7 +362,7 @@ export function createBot(config, state, roster, github, mailer) {
       if (matches.length !== 1) throw new Error(username ? 'GitHub username must match one Clean-roster member.' : 'That email is not on the Clean roster.');
       const person = matches[0];
       const id = saveAction(actor.id, { type: 'github-invite', email: person.email, githubTarget: githubHandle(person.github) });
-      await interaction.editReply({ content: `Invite ${person.name} to TigerAppsOrg as a member?\nGitHub target: ${githubHandle(person.github) || person.email}\nThe invitation is pending until accepted. Current organization base access is write.`, components: confirmButtons(id) });
+      await interaction.editReply({ ...card(`Invite ${person.name}?`, `GitHub: ${githubHandle(person.github) || person.email}\nAccess begins after they accept. Organization base access is write.`), components: confirmButtons(id) });
       return;
     }
     if (interaction.commandName === 'announce') {
@@ -328,7 +391,7 @@ export function createBot(config, state, roster, github, mailer) {
     const id = interaction.customId.slice('announce:'.length);
     const action = state.get().actions[id];
     if (!action || action.actorId !== interaction.user.id || action.status !== 'input' || action.expiresAt < Date.now()) {
-      await interaction.reply({ flags: ephemeral, content: 'That announcement expired. Run /announce again.' }); return;
+      await interaction.reply({ flags: ephemeral, ...card('Announcement expired', 'Run `/announce` again.', 0xe19a35) }); return;
     }
     await interaction.deferReply({ flags: ephemeral });
     const actor = await currentMember(interaction.user.id);
@@ -350,7 +413,7 @@ export function createBot(config, state, roster, github, mailer) {
         recipientDigest: digest(recipients), to, cc: action.team ? mailSender : null,
       });
     });
-    await interaction.editReply({ content: announcementPreview({ subject, body, team: action.team }, server, recipients.length),
+    await interaction.editReply({ ...card('Review announcement', announcementPreview({ subject, body, team: action.team }, server, recipients.length)),
       allowedMentions: { parse: [] }, components: confirmButtons(id) });
   }
 
@@ -388,13 +451,19 @@ export function createBot(config, state, roster, github, mailer) {
       try { state.link(`board:${person.email}`, person.email, member.id); }
       catch { return 'Account link failed; check for another Discord account linked to this roster email.'; }
     }
-    let roles = 'Existing Board roles unchanged';
+    let roles = 'Discord roles unchanged';
+    let ready = true;
     if (!boardTarget) {
       try { await setOrdinaryRoles(member, rosterChoices(person)); roles = 'Ordinary roles assigned'; }
-      catch { roles = 'Discord role change failed; Board must review'; }
+      catch { roles = 'Discord role change failed; Board must review'; ready = false; }
     }
     const notice = await boardNotice(`<@${action.actorId}> onboarded <@${member.id}> as ${person.email}. ${roles}.`);
-    return `Linked ${person.name} to ${person.email}. ${roles}. ${notice ? 'Board log updated.' : 'Board log failed; notify Board.'}`;
+    let dm = 'DM not sent while roles need review.';
+    if (ready) {
+      try { await member.user.send(assistedOnboardingDm(member, action.actorId, server, !boardTarget)); dm = 'DM sent.'; }
+      catch { dm = 'DM unavailable; tell the member directly.'; await boardNotice(`Could not DM <@${member.id}> after Board onboarding.`); }
+    }
+    return `Linked ${person.name} to ${person.email}. ${roles}. ${dm} ${notice ? 'Board log updated.' : 'Board log failed; notify Board.'}`;
   }
 
   async function remove(action) {
@@ -448,14 +517,14 @@ export function createBot(config, state, roster, github, mailer) {
     const [verb, id] = interaction.customId.split(':');
     const action = state.get().actions[id];
     if (!action || action.actorId !== interaction.user.id || action.expiresAt < Date.now()) {
-      await interaction.reply({ flags: ephemeral, content: 'This confirmation expired. Run the command again.' }); return;
+      await interaction.reply({ flags: ephemeral, ...card('Confirmation expired', 'Run the command again.', 0xe19a35) }); return;
     }
     if (action.status !== 'ready') {
-      await interaction.reply({ flags: ephemeral, content: 'This action has already started. Ask Board to check its result before retrying.' }); return;
+      await interaction.reply({ flags: ephemeral, ...card('Already started', 'Ask Board to check its result before retrying.', 0xe19a35) }); return;
     }
     if (verb === 'cancel') {
       state.update(data => { delete data.actions[id]; });
-      await interaction.update({ content: 'Cancelled.', components: [] }); return;
+      await interaction.update({ ...card('Cancelled', 'No changes were made.'), components: [] }); return;
     }
     await interaction.deferUpdate();
     const actor = await currentMember(interaction.user.id);
@@ -473,7 +542,7 @@ export function createBot(config, state, roster, github, mailer) {
       return true;
     });
     if (!claimed) {
-      await interaction.followUp({ flags: ephemeral, content: 'This action was cancelled or already started. Run the command again if needed.' }); return;
+      await interaction.followUp({ flags: ephemeral, ...card('Already handled', 'This action was cancelled or already started. Run the command again if needed.', 0xe19a35) }); return;
     }
     try {
       let result;
@@ -483,12 +552,14 @@ export function createBot(config, state, roster, github, mailer) {
       if (action.type === 'github-invite') result = { status: 'done', message: await invite(action) };
       if (action.type === 'announce') result = await announce(id, action);
       state.update(data => { data.actions[id].status = result.status; });
-      await interaction.editReply({ content: result.message, components: [] });
+      await interaction.editReply({ ...card(result.status === 'uncertain' ? 'Needs review' : 'Update', result.message,
+        result.status === 'uncertain' ? 0xe19a35 : accent), components: [] });
     } catch {
       state.update(data => { data.actions[id].status = 'uncertain'; });
       await boardNotice(`Action ${action.type} requested by <@${action.actorId}> had an uncertain result. Check Discord, roster, GitHub, or Gmail before repeating it.`);
-      if (interaction.deferred) await interaction.editReply({ content: 'The action needs review. Board has been notified; do not retry until its outcome is checked.', components: [] });
-      else await interaction.reply({ flags: ephemeral, content: 'The action needs review. Board has been notified; do not retry until its outcome is checked.' });
+      const response = card('Needs review', 'Board has been notified. Check the outcome before retrying.', 0xe19a35);
+      if (interaction.deferred) await interaction.editReply({ ...response, components: [] });
+      else await interaction.reply({ flags: ephemeral, ...response });
     }
   }
 
@@ -506,11 +577,11 @@ export function createBot(config, state, roster, github, mailer) {
         else if (interaction.customId === 'onboard:guest') {
           await interaction.deferUpdate();
           await guest(await currentMember(interaction.user.id));
-          await interaction.editReply({ content: `Welcome! Use <#${server.channels.publicChat}> to chat or ask for roster help.`, components: [] });
+          await interaction.editReply({ ...card('Welcome to TigerApps', `Use <#${server.channels.publicChat}> to chat or ask for roster help.`), components: [] });
           void boardNotice(`<@${interaction.user.id}> chose Guest access.`);
         } else if (interaction.customId === 'onboard:accepted') {
           const url = oauth.start(interaction.user.id);
-          await interaction.update({ content: 'Verify your Discord and Princeton accounts to continue.',
+          await interaction.update({ ...card('Verify your account', 'Sign in with Discord and Princeton to continue.'),
             components: [row(new ButtonBuilder().setLabel('Verify').setStyle(ButtonStyle.Link).setURL(url))] });
         } else if (interaction.customId === 'onboard:confirm') await confirmOnboarding(interaction);
         else if (interaction.customId.startsWith('confirm:') || interaction.customId.startsWith('cancel:')) await actionButton(interaction);
@@ -518,7 +589,7 @@ export function createBot(config, state, roster, github, mailer) {
     } catch (error) {
       console.error(`Interaction failed: ${error.message}`);
       const safe = [
-        'Only Board and Team Leads can use /info.', 'Provide either a Discord member or one exact roster email.',
+        'Only TigerApps members can use /info.', 'Provide either a Discord member or one exact roster email.',
         'Provide both a Discord member and roster email.', 'Only Board can onboard another member.',
         '/onboard is for people, not apps.', 'That Discord member is linked to another roster email.',
         'That roster email is linked to another Discord member.',
@@ -534,9 +605,10 @@ export function createBot(config, state, roster, github, mailer) {
         'Your command access changed.', 'Announcement access changed.', 'Invalid role selection.',
       ].includes(error.message) || error.message.startsWith('Choose one of your teams:') ? error.message : 'That did not work. Please try again or ask Board for help.';
       try {
-        if (interaction.deferred && (interaction.isModalSubmit() || interaction.isChatInputCommand() || ['onboard:start', 'onboard:guest'].includes(interaction.customId))) await interaction.editReply({ content: safe, components: [] });
-        else if (interaction.deferred || interaction.replied) await interaction.followUp({ flags: ephemeral, content: safe });
-        else await interaction.reply({ flags: ephemeral, content: safe });
+        const response = card('Could not complete', safe, 0xe19a35);
+        if (interaction.deferred && (interaction.isModalSubmit() || interaction.isChatInputCommand() || ['onboard:start', 'onboard:guest'].includes(interaction.customId))) await interaction.editReply({ ...response, components: [] });
+        else if (interaction.deferred || interaction.replied) await interaction.followUp({ flags: ephemeral, ...response });
+        else await interaction.reply({ flags: ephemeral, ...response });
       } catch { console.error('Could not report an interaction error to Discord.'); }
     }
   }
@@ -569,6 +641,7 @@ export function createBot(config, state, roster, github, mailer) {
       const channel = guild.channels.cache.get(id);
       if (!channel?.isTextBased() || !channel.send || !channel.permissionsFor(me)?.has([
         PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory,
+        PermissionsBitField.Flags.EmbedLinks,
       ])) throw new Error(`Bot needs text-channel access in ${id}.`);
     }
     if (!state.get().rolloutStartedAt) state.update(data => { data.rolloutStartedAt = Date.now(); });
