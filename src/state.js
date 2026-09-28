@@ -32,6 +32,8 @@ export class State {
 
   link(sub, email, discordId) {
     return this.update(data => {
+      const boardLink = `board:${email}`;
+      if (sub !== boardLink && data.links[boardLink]?.discordId === discordId) delete data.links[boardLink];
       if (data.links[sub] && data.links[sub].discordId !== discordId) throw new Error('This Princeton account is already linked to another Discord account.');
       if (Object.entries(data.links).some(([otherSub, link]) => otherSub !== sub && link.discordId === discordId)) {
         throw new Error('This Discord account is already linked to another Princeton account.');

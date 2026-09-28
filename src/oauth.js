@@ -32,7 +32,7 @@ function page(response, status, message, link, clear = false) {
   response.end(`<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TigerApps access</title><style>body{font:16px system-ui;max-width:32rem;margin:4rem auto;padding:0 1rem;line-height:1.5}a{color:#4654c5}</style><h1>TigerApps access</h1><p>${message}</p>${link ? `<p><a href="${link}">Return to Discord</a></p>` : ''}</html>`);
 }
 
-export function createOAuth(config, state, roster, client) {
+export function createOAuth(config, state, roster, client, boardNotice) {
   const google = new OAuth2Client(config.googleClientId, config.googleClientSecret, `${config.baseUrl}/auth/google`);
   const discordRedirect = `${config.baseUrl}/auth/discord`;
   const discordLink = `https://discord.com/channels/${config.server.guildId}/${config.server.channels.startHere}`;
@@ -98,6 +98,7 @@ export function createOAuth(config, state, roster, client) {
           if (member.joinedTimestamp < state.get().rolloutStartedAt) next = "You're verified.";
         } catch { /* The member can use /onboard for the next step. */ }
         page(response, 200, next, discordLink, true);
+        void boardNotice(`<@${attempt.discordId}> linked Princeton account ${email}.`);
         try { await (await client.users.fetch(attempt.discordId)).send(`${next} ${discordLink}`); } catch { /* DMs may be closed. */ }
       } else {
         page(response, 400, 'This sign-in step is no longer valid. Start again in Discord.', discordLink);

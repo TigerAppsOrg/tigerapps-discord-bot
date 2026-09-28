@@ -42,7 +42,9 @@ function choiceMessage(config, chosen) {
 function commands(config) {
   const teamChoices = Object.keys(config.server.teams).map(name => ({ name, value: name }));
   return [
-    new SlashCommandBuilder().setName('onboard').setDescription('Set up your TigerApps access'),
+    new SlashCommandBuilder().setName('onboard').setDescription('Set up TigerApps access')
+      .addUserOption(option => option.setName('member').setDescription('Board: Discord member to onboard'))
+      .addStringOption(option => option.setName('email').setDescription('Board: exact Princeton roster email')),
     new SlashCommandBuilder().setName('resign').setDescription('Move your TigerApps access to Alumni'),
     new SlashCommandBuilder().setName('remove').setDescription('Board: remove a member’s access')
       .addUserOption(option => option.setName('member').setDescription('Discord member').setRequired(true))
@@ -66,7 +68,7 @@ export async function roleChange(member, desired, revoke) {
 
 export function createBot(config, state, roster, github, mailer) {
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
-  const oauth = createOAuth(config, state, roster, client);
+  const oauth = createOAuth(config, state, roster, client, boardNotice);
   const { server } = config;
   let guild;
 
@@ -86,10 +88,29 @@ export function createBot(config, state, roster, github, mailer) {
   const isLead = member => member.roles.cache.has(server.roles.teamLead);
   const leadsFor = member => Object.entries(server.teams).filter(([, team]) => team.leadIds.includes(member.id)).map(([name]) => name);
 
+  const rosterChoices = person => ({
+    teams: rosterTeams(person, Object.keys(server.teams)),
+    functions: rosterFunctions(person, Object.keys(server.functions)),
+    year: server.years[person.year] ? person.year : '',
+  });
+
+  function setOrdinaryRoles(member, chosen) {
+    const desired = [server.roles.member,
+      ...chosen.teams.map(name => server.teams[name].roleId),
+      ...chosen.functions.map(name => server.functions[name]),
+      ...(chosen.year ? [server.years[chosen.year]] : [])];
+    return roleChange(member, desired, [server.roles.guest, server.roles.alumni, server.roles.member,
+      ...Object.values(server.teams).map(team => team.roleId), ...Object.values(server.functions),
+      ...Object.values(server.years), ...(server.revokeRoleIds || [])]);
+  }
+
   async function guest(member) {
     if (!state.get().rolloutStartedAt || member.joinedTimestamp < state.get().rolloutStartedAt ||
         member.pending || member.roles.cache.has(server.roles.member) || member.roles.cache.has(server.roles.guest)) return;
-    try { await member.roles.add(server.roles.guest); }
+    try {
+      await member.roles.add(server.roles.guest);
+      void boardNotice(`<@${member.id}> joined and received Guest access.`);
+    }
     catch { await boardNotice(`Could not assign Guest to <@${member.id}>.`); }
   }
 
@@ -111,13 +132,7 @@ export function createBot(config, state, roster, github, mailer) {
       await interaction.editReply({ content: 'Your Princeton account is linked.' });
       return;
     }
-    const chosen = {
-      teams: rosterTeams(person, Object.keys(server.teams)),
-      functions: rosterFunctions(person, Object.keys(server.functions)),
-      year: server.years[person.year] ? person.year : '',
-      status: 'ready',
-      expiresAt: Date.now() + 15 * 60_000,
-    };
+    const chosen = { ...rosterChoices(person), status: 'ready', expiresAt: Date.now() + 15 * 60_000 };
     state.update(data => { data.onboarding[interaction.user.id] = chosen; });
     await interaction.editReply(choiceMessage(config, chosen));
   }
@@ -156,16 +171,8 @@ export function createBot(config, state, roster, github, mailer) {
     if (isBoard(member) || member.id === guild.ownerId) {
       await interaction.editReply({ content: 'Your Princeton account is linked. The server owner manages Board roles.', components: [] }); return;
     }
-    const selected = [
-      server.roles.member,
-      ...chosen.teams.map(name => server.teams[name]?.roleId),
-      ...chosen.functions.map(name => server.functions[name]),
-      ...(chosen.year ? [server.years[chosen.year]] : []),
-    ].filter(Boolean);
     try {
-      await roleChange(member, selected, [server.roles.guest, server.roles.alumni, server.roles.member,
-        ...Object.values(server.teams).map(team => team.roleId), ...Object.values(server.functions), ...Object.values(server.years),
-        ...(server.revokeRoleIds || [])]);
+      await setOrdinaryRoles(member, chosen);
     } catch {
       await boardNotice(`Could not finish ordinary role assignment for <@${member.id}>. Check the current role mapping and hierarchy.`);
       await interaction.editReply({ content: 'Your role setup needs Board help. Please ask in the public chat.', components: [] });
@@ -190,6 +197,7 @@ export function createBot(config, state, roster, github, mailer) {
       } catch { await boardNotice(`Could not post the team-selection notice for <@${member.id}> in ${name}.`); }
     }
     await interaction.editReply({ content: `You're set. See <#${server.channels.announcements}> and your selected team channels.`, components: [] });
+    void boardNotice(`<@${member.id}> completed onboarding as ${link.email}.`);
   }
 
   function saveAction(actorId, action) {
@@ -203,7 +211,31 @@ export function createBot(config, state, roster, github, mailer) {
   }
 
   async function command(interaction) {
-    if (interaction.commandName === 'onboard') return startHere(interaction);
+    if (interaction.commandName === 'onboard') {
+      const target = interaction.options.getUser('member');
+      const email = interaction.options.getString('email')?.trim().toLowerCase();
+      if (!target && !email) return startHere(interaction);
+      if (!target || !email) throw new Error('Provide both a Discord member and roster email.');
+      if (!interaction.inCachedGuild() || !isBoard(interaction.member)) throw new Error('Only Board can onboard another member.');
+      if (target.bot) throw new Error('/onboard is for people, not apps.');
+      await interaction.deferReply({ flags: ephemeral });
+      const member = interaction.options.getMember('member') || await currentMember(target.id);
+      const person = await roster.byEmail(email);
+      if (!person) throw new Error('That email is not on the Clean roster.');
+      const linked = state.linkedByDiscord(target.id);
+      if (linked && linked.email !== email) throw new Error('That Discord member is linked to another roster email.');
+      if (Object.values(state.get().links).some(link => link.email === email && link.discordId !== target.id)) {
+        throw new Error('That roster email is linked to another Discord member.');
+      }
+      const chosen = rosterChoices(person);
+      const boardTarget = isBoard(member) || member.id === interaction.guild.ownerId;
+      const roles = ['TigerApps', ...chosen.teams, ...chosen.functions, ...(chosen.year ? [chosen.year] : [])].join(', ');
+      const id = saveAction(interaction.user.id, { type: 'onboard-member', targetId: target.id, email,
+        roster: [person.team, person.role, person.year], boardTarget });
+      await interaction.editReply({ content: `Onboard <@${target.id}> as ${person.name} (${email})?\n${boardTarget ? 'Existing Board roles stay unchanged.' : `Assign roles: ${roles}`}`,
+        allowedMentions: { parse: [] }, components: confirmButtons(id) });
+      return;
+    }
     if (!interaction.inCachedGuild()) throw new Error('Server member data unavailable. Try again.');
     const actor = interaction.member;
     if (interaction.commandName === 'info') {
@@ -330,6 +362,30 @@ export function createBot(config, state, roster, github, mailer) {
     return `${roles}. ${flagged}. ${notice ? 'Board notified.' : 'Board notice failed; please contact Board.'}`;
   }
 
+  async function onboardMember(action) {
+    const person = await roster.byEmail(action.email);
+    if (!person || JSON.stringify([person.team, person.role, person.year]) !== JSON.stringify(action.roster)) {
+      return 'The roster changed since preview. Run /onboard again.';
+    }
+    const member = await currentMember(action.targetId);
+    if (member.user.bot) return 'Apps cannot be onboarded.';
+    const boardTarget = isBoard(member) || member.id === guild.ownerId;
+    if (boardTarget !== action.boardTarget) return 'Discord roles changed since preview. Run /onboard again.';
+    const linked = state.linkedByDiscord(member.id);
+    if (linked && linked.email !== person.email) return 'That Discord member is linked to another roster email.';
+    if (!linked) {
+      try { state.link(`board:${person.email}`, person.email, member.id); }
+      catch { return 'Account link failed; check for another Discord account linked to this roster email.'; }
+    }
+    let roles = 'Existing Board roles unchanged';
+    if (!boardTarget) {
+      try { await setOrdinaryRoles(member, rosterChoices(person)); roles = 'Ordinary roles assigned'; }
+      catch { roles = 'Discord role change failed; Board must review'; }
+    }
+    const notice = await boardNotice(`<@${action.actorId}> onboarded <@${member.id}> as ${person.email}. ${roles}.`);
+    return `Linked ${person.name} to ${person.email}. ${roles}. ${notice ? 'Board log updated.' : 'Board log failed; notify Board.'}`;
+  }
+
   async function remove(action) {
     const member = await currentMember(action.targetId);
     if (isBoard(member) || member.id === guild.ownerId) throw new Error('Board roles require server-owner action.');
@@ -391,7 +447,7 @@ export function createBot(config, state, roster, github, mailer) {
     }
     await interaction.deferUpdate();
     const actor = await currentMember(interaction.user.id);
-    if ((action.type === 'remove' && !isBoard(actor)) ||
+    if ((['remove', 'onboard-member'].includes(action.type) && !isBoard(actor)) ||
         (action.type === 'github-invite' && !isBoard(actor) && !isLead(actor)) ||
         (action.type === 'announce' && !isBoard(actor) && (!isLead(actor) || !leadsFor(actor).includes(action.team)))) {
       throw new Error('Your command access changed.');
@@ -410,6 +466,7 @@ export function createBot(config, state, roster, github, mailer) {
     try {
       let result;
       if (action.type === 'resign') result = { status: 'done', message: await resign(interaction.user.id) };
+      if (action.type === 'onboard-member') result = { status: 'done', message: await onboardMember(action) };
       if (action.type === 'remove') result = { status: 'done', message: await remove(action) };
       if (action.type === 'github-invite') result = { status: 'done', message: await invite(action) };
       if (action.type === 'announce') result = await announce(id, action);
@@ -426,7 +483,10 @@ export function createBot(config, state, roster, github, mailer) {
   async function onInteraction(interaction) {
     if (interaction.guildId !== server.guildId) return;
     try {
-      if (interaction.isChatInputCommand()) await command(interaction);
+      if (interaction.isChatInputCommand()) {
+        try { await command(interaction); }
+        finally { void boardNotice(`<@${interaction.user.id}> invoked /${interaction.commandName}.`); }
+      }
       else if (interaction.isModalSubmit() && interaction.customId.startsWith('announce:')) await announcementModal(interaction);
       else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('onboard:')) await selection(interaction);
       else if (interaction.isButton()) {
@@ -434,6 +494,7 @@ export function createBot(config, state, roster, github, mailer) {
         else if (interaction.customId === 'onboard:guest') {
           await guest(await currentMember(interaction.user.id));
           await interaction.update({ content: `Welcome! Use <#${server.channels.publicChat}> to chat or ask for roster help.`, components: [] });
+          void boardNotice(`<@${interaction.user.id}> chose Guest access.`);
         } else if (interaction.customId === 'onboard:accepted') {
           const url = oauth.start(interaction.user.id);
           await interaction.update({ content: 'Verify your Discord and Princeton accounts to continue.',
@@ -445,6 +506,9 @@ export function createBot(config, state, roster, github, mailer) {
       console.error(`Interaction failed: ${error.message}`);
       const safe = [
         'Only Board and Team Leads can use /info.', 'Provide either a Discord member or one exact roster email.',
+        'Provide both a Discord member and roster email.', 'Only Board can onboard another member.',
+        '/onboard is for people, not apps.', 'That Discord member is linked to another roster email.',
+        'That roster email is linked to another Discord member.',
         'No linked Clean-roster member found.', 'The server owner must handle Board resignations.',
         'The server owner must handle Board removals.', 'Only Board can use /remove.',
         '/remove is for people, not apps.',

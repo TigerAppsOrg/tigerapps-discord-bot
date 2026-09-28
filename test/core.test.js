@@ -39,6 +39,9 @@ test('one Princeton account links to one Discord account across reloads', () => 
     assert.throws(() => state.link('google-1', 'a@princeton.edu', 'discord-2'), /already linked/);
     assert.throws(() => state.link('google-2', 'b@princeton.edu', 'discord-1'), /already linked/);
     assert.throws(() => state.link('google-2', 'a@princeton.edu', 'discord-2'), /already linked/);
+    state.link('board:b@princeton.edu', 'b@princeton.edu', 'discord-2');
+    state.link('google-2', 'b@princeton.edu', 'discord-2');
+    assert.equal(Object.keys(state.get().links).includes('board:b@princeton.edu'), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -151,14 +154,16 @@ test('server reads file-backed credentials from private paths', () => {
   }
 });
 
-test('commands select Board announcement teams, match roster GitHub handles, and preserve claimed actions', async () => {
+test('command previews, audit logs, and cancellation guards', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'tigerapps-interaction-'));
   const state = new State(join(dir, 'state.json'));
-  const rows = [{ name: 'Member A', email: 'a@princeton.edu', github: 'https://github.com/Member-A' }];
+  const rows = [{ name: 'Member A', email: 'a@princeton.edu', github: 'https://github.com/Member-A', team: 'TigerOps', role: 'SWE', year: '2028' }];
   const { client } = createBot({ baseUrl: 'http://localhost:3000', server: {
     guildId: '1275140369457348638', roles: { board: 'board', teamLead: 'lead' },
-    channels: { startHere: 'channel' }, teams: { TigerOps: { roleId: 'team', channelId: 'channel', leadIds: [] } },
+    channels: { startHere: 'channel' }, teams: { TigerOps: { roleId: 'team', channelId: 'channel', leadIds: [] } }, functions: {}, years: {},
   } }, state, { all: async () => rows, byEmail: async email => rows.find(row => row.email === email) }, {}, {});
+  const logs = [];
+  client.channels.fetch = async () => ({ send: async message => { logs.push(message.content); } });
   const base = { guildId: '1275140369457348638', user: { id: 'user' },
     isModalSubmit: () => false, isStringSelectMenu: () => false };
   const emit = interaction => new Promise(resolve => client.emit('interactionCreate', {
@@ -170,6 +175,15 @@ test('commands select Board announcement teams, match roster GitHub handles, and
     const denied = await emit({ isButton: () => true, customId: 'cancel:claimed' });
     assert.match(denied.content, /already started/);
     assert.equal(state.get().actions.claimed.status, 'executing');
+    const selfOnboard = await emit({ isChatInputCommand: () => true, commandName: 'onboard',
+      options: { getUser: () => null, getString: () => null } });
+    assert.match(selfOnboard.content, /Were you accepted/);
+    const boardOnboard = await emit({ isChatInputCommand: () => true, commandName: 'onboard',
+      inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } }, guild: { ownerId: 'owner' },
+      options: { getUser: () => ({ id: 'target', bot: false }), getString: () => 'a@princeton.edu',
+        getMember: () => ({ id: 'target', roles: { cache: new Set() } }) } });
+    assert.match(boardOnboard.content, /Assign roles: TigerApps, TigerOps/);
+    assert.ok(Object.values(state.get().actions).some(action => action.type === 'onboard-member' && action.targetId === 'target'));
     const modal = await emit({ isChatInputCommand: () => true, commandName: 'announce',
       inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
       options: { getString: () => null }, });
@@ -196,5 +210,9 @@ test('commands select Board announcement teams, match roster GitHub handles, and
         options: { getString: name => name === 'username' ? 'member-a' : null } });
       assert.match(ambiguous.content, /must match one Clean-roster member/);
     } finally { console.error = originalError; }
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(logs.some(message => message.includes('invoked /onboard')));
+    assert.ok(logs.some(message => message.includes('invoked /announce')));
+    assert.ok(logs.some(message => message.includes('invoked /github-invite')));
   } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
 });
