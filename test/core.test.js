@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, validateServerConfig } from '../src/config.js';
-import { announcementPost, createBot, roleChange } from '../src/bot.js';
+import { announcementPost, announcementPreview, createBot, roleChange } from '../src/bot.js';
 import { Github, announcementRecipients, githubHandle, mailMessage } from '../src/integrations.js';
 import { verifiedPrincetonEmail } from '../src/oauth.js';
 import { Roster, parseRoster, rosterFunctions, rosterTeams } from '../src/roster.js';
@@ -66,6 +66,18 @@ test('announcement posts ping only the selected role', () => {
   const clubPost = announcementPost({ ...message, team: null }, server);
   assert.match(clubPost.content, /<@&club-role>$/);
   assert.deepEqual(clubPost.allowedMentions, { parse: [], roles: ['club-role'] });
+});
+
+test('announcement previews fit Discord at the modal input limits', () => {
+  const server = { roles: { member: '1'.repeat(20) }, channels: { announcements: '2'.repeat(20) },
+    teams: { 'Princeton Intelligence': { roleId: '3'.repeat(20), channelId: '4'.repeat(20) } } };
+  const message = { subject: 'S'.repeat(100), body: 'B'.repeat(1800) };
+  for (const team of ['Princeton Intelligence', null]) {
+    const preview = announcementPreview({ ...message, team }, server, 49);
+    assert.ok(preview.length <= 2000, `Preview has ${preview.length} characters`);
+    assert.match(preview, /49 BCC emails/);
+    assert.match(preview, /<#[24]{20}>/);
+  }
 });
 
 test('mail hides recipients and rejects header injection', () => {

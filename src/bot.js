@@ -45,6 +45,11 @@ export function announcementPost(action, server) {
     allowedMentions: { parse: [], roles: [roleId] } };
 }
 
+export function announcementPreview(action, server, recipients) {
+  const channelId = action.team ? server.teams[action.team].channelId : server.channels.announcements;
+  return `Preview · <#${channelId}> · ${recipients} BCC emails\n\n${announcementPost(action, server).content}`;
+}
+
 function commands(config) {
   const teamChoices = Object.keys(config.server.teams).map(name => ({ name, value: name }));
   return [
@@ -345,8 +350,7 @@ export function createBot(config, state, roster, github, mailer) {
         recipientDigest: digest(recipients), to, cc: action.team ? mailSender : null,
       });
     });
-    const destination = action.team ? `${action.team} team channel` : 'club announcements';
-    await interaction.editReply({ content: `Preview for ${destination} and ${recipients.length} hidden email recipients:\n\n${announcementPost({ subject, body, team: action.team }, server).content}`,
+    await interaction.editReply({ content: announcementPreview({ subject, body, team: action.team }, server, recipients.length),
       allowedMentions: { parse: [] }, components: confirmButtons(id) });
   }
 
