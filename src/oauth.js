@@ -91,7 +91,7 @@ export function createOAuth(config, state, roster, client, boardNotice) {
         if (!(await roster.byEmail(email))) throw new Error('This email is not on the current TigerApps roster. Ask a lead in the public chat.');
         state.link(identity.sub, email, attempt.discordId);
         state.update(data => { delete data.oauth[token]; });
-        let next = 'Verified. Return to Discord and select Set up access to confirm your roles.';
+        let next = "You're verified. Return to Discord to finish setup.";
         try {
           const guild = await client.guilds.fetch(config.server.guildId);
           const member = await guild.members.fetch(attempt.discordId);

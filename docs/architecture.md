@@ -59,7 +59,7 @@ sequenceDiagram
   Member->>Discord: Join and complete server screening
   Discord->>Bot: Guild member event
   Bot->>Discord: Assign Guest
-  Member->>Discord: Set up access or /onboard
+  Member->>Discord: Get started or /onboard
   Discord->>Bot: Accepted member choice
   Bot-->>Member: Verification link
   Member->>Edge: Open verification link
