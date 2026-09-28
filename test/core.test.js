@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, validateServerConfig } from '../src/config.js';
-import { createBot, roleChange } from '../src/bot.js';
+import { announcementPost, createBot, roleChange } from '../src/bot.js';
 import { Github, announcementRecipients, githubHandle, mailMessage } from '../src/integrations.js';
 import { verifiedPrincetonEmail } from '../src/oauth.js';
 import { Roster, parseRoster, rosterFunctions, rosterTeams } from '../src/roster.js';
@@ -55,6 +55,17 @@ test('role changes apply the final set once and preserve unrelated roles', async
   await roleChange(member, ['member'], ['guest', 'member']);
   assert.deepEqual(new Set(updated), new Set(['member', 'unrelated']));
   assert.equal(calls, 1);
+});
+
+test('announcement posts ping only the selected role', () => {
+  const server = { teams: { TigerOps: { roleId: 'ops-role' }, 'The Forum': { roleId: 'forum-role' } } };
+  const message = { subject: 'Update', body: 'Hello', team: 'The Forum' };
+  assert.deepEqual(announcementPost(message, server), {
+    content: '**Update**\nHello\n\n<@&forum-role>', allowedMentions: { parse: [], roles: ['forum-role'] },
+  });
+  const clubPost = announcementPost({ ...message, team: null }, server);
+  assert.match(clubPost.content, /<@&ops-role>$/);
+  assert.deepEqual(clubPost.allowedMentions, { parse: [], roles: ['ops-role'] });
 });
 
 test('mail hides recipients and rejects header injection', () => {

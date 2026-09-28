@@ -39,6 +39,12 @@ function choiceMessage(config, chosen) {
   };
 }
 
+export function announcementPost(action, server) {
+  const roleId = server.teams[action.team || 'TigerOps'].roleId;
+  return { content: `**${action.subject}**\n${action.body}\n\n<@&${roleId}>`,
+    allowedMentions: { parse: [], roles: [roleId] } };
+}
+
 function commands(config) {
   const teamChoices = Object.keys(config.server.teams).map(name => ({ name, value: name }));
   return [
@@ -340,7 +346,8 @@ export function createBot(config, state, roster, github, mailer) {
       });
     });
     const destination = action.team ? `${action.team} team channel` : 'club announcements';
-    await interaction.editReply({ content: `Preview for ${destination} and ${recipients.length} hidden email recipients:\n\n**${subject}**\n${body}`, allowedMentions: { parse: [] }, components: confirmButtons(id) });
+    await interaction.editReply({ content: `Preview for ${destination} and ${recipients.length} hidden email recipients:\n\n${announcementPost({ subject, body, team: action.team }, server).content}`,
+      allowedMentions: { parse: [] }, components: confirmButtons(id) });
   }
 
   async function resign(actorId) {
@@ -419,7 +426,7 @@ export function createBot(config, state, roster, github, mailer) {
     if (digest(recipients) !== action.recipientDigest) return { status: 'done', message: 'The roster changed since preview. Run /announce again.' };
     const channelId = action.team ? server.teams[action.team].channelId : server.channels.announcements;
     const channel = await client.channels.fetch(channelId);
-    const sent = await channel.send({ content: `**${action.subject}**\n${action.body}`, allowedMentions: { parse: [] } });
+    const sent = await channel.send(announcementPost(action, server));
     state.update(data => { data.actions[id].messageId = sent.id; data.actions[id].status = 'sending'; });
     try {
       const gmailId = await mailer.send({ subject: action.subject, body: action.body, to: action.to, cc: action.cc, bcc: recipients });
