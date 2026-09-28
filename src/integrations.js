@@ -83,12 +83,23 @@ export function mailMessage({ subject, body, to, cc, bcc }) {
   };
   const safeSubject = subject.replace(/[\r\n]/g, ' ').trim();
   if (!safeSubject || !bcc.length) throw new Error('Announcement needs a subject and recipients.');
+  const subjectWords = [];
+  let chunk = '', bytes = 0;
+  for (const character of safeSubject) {
+    const size = Buffer.byteLength(character);
+    // 39 bytes keeps even the first Subject line within RFC 2047's 76-character limit.
+    if (bytes + size > 39) { subjectWords.push(chunk); chunk = ''; bytes = 0; }
+    chunk += character;
+    bytes += size;
+  }
+  subjectWords.push(chunk);
+  const encodedSubject = subjectWords.map(word => `=?UTF-8?B?${Buffer.from(word).toString('base64')}?=`).join('\r\n ');
   const headers = [
     `From: TigerApps <${sender}>`, `To: ${address(to)}`,
     ...(cc ? [`Cc: ${address(cc)}`] : []),
     `Bcc: ${bcc.map(address).join(',\r\n ')}`,
     `Reply-To: ${address(to)}`,
-    `Subject: =?UTF-8?B?${Buffer.from(safeSubject).toString('base64')}?=`,
+    `Subject: ${encodedSubject}`,
     'MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8',
     'Content-Transfer-Encoding: 8bit',
   ];

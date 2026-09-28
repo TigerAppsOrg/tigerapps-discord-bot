@@ -499,8 +499,9 @@ export function createBot(config, state, roster, github, mailer) {
       else if (interaction.isButton()) {
         if (interaction.customId === 'onboard:start') await startHere(interaction);
         else if (interaction.customId === 'onboard:guest') {
+          await interaction.deferUpdate();
           await guest(await currentMember(interaction.user.id));
-          await interaction.update({ content: `Welcome! Use <#${server.channels.publicChat}> to chat or ask for roster help.`, components: [] });
+          await interaction.editReply({ content: `Welcome! Use <#${server.channels.publicChat}> to chat or ask for roster help.`, components: [] });
           void boardNotice(`<@${interaction.user.id}> chose Guest access.`);
         } else if (interaction.customId === 'onboard:accepted') {
           const url = oauth.start(interaction.user.id);
@@ -528,7 +529,7 @@ export function createBot(config, state, roster, github, mailer) {
         'Your command access changed.', 'Announcement access changed.', 'Invalid role selection.',
       ].includes(error.message) || error.message.startsWith('Choose one of your teams:') ? error.message : 'That did not work. Please try again or ask Board for help.';
       try {
-        if (interaction.deferred && (interaction.isModalSubmit() || interaction.isChatInputCommand() || interaction.customId === 'onboard:start')) await interaction.editReply({ content: safe, components: [] });
+        if (interaction.deferred && (interaction.isModalSubmit() || interaction.isChatInputCommand() || ['onboard:start', 'onboard:guest'].includes(interaction.customId))) await interaction.editReply({ content: safe, components: [] });
         else if (interaction.deferred || interaction.replied) await interaction.followUp({ flags: ephemeral, content: safe });
         else await interaction.reply({ flags: ephemeral, content: safe });
       } catch { console.error('Could not report an interaction error to Discord.'); }

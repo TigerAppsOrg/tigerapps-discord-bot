@@ -76,6 +76,17 @@ test('mail hides recipients and rejects header injection', () => {
   const many = Buffer.from(mailMessage({ subject: 'All hands', body: 'Hello', to: 'lead@princeton.edu',
     bcc: Array.from({ length: 60 }, (_, i) => `member${i}@princeton.edu`) }), 'base64url').toString();
   assert.ok(many.split('\r\n\r\n')[0].split('\r\n').every(line => Buffer.byteLength(line) <= 998));
+  for (const subject of ['A'.repeat(100), '📣'.repeat(25)]) {
+    const message = Buffer.from(mailMessage({ subject, body: 'Hello', to: 'lead@princeton.edu',
+      bcc: ['a@princeton.edu'] }), 'base64url').toString();
+    const lines = message.split('\r\n');
+    const start = lines.findIndex(line => line.startsWith('Subject: '));
+    const folded = [lines[start]];
+    for (let i = start + 1; lines[i]?.startsWith(' '); i++) folded.push(lines[i]);
+    assert.ok(folded.length > 1 && folded.every(line => line.length <= 76));
+    assert.equal([...folded.join(' ').matchAll(/=\?UTF-8\?B\?([^?]+)\?=/g)]
+      .map(match => Buffer.from(match[1], 'base64').toString()).join(''), subject);
+  }
   assert.throws(() => mailMessage({ subject: 'News', body: 'x', to: 'bad@example.com\r\nBcc: attacker@example.com', bcc: ['a@princeton.edu'] }), /Invalid email/);
   assert.deepEqual(announcementRecipients([{ team: 'TigerOps, The Forum', email: 'a@princeton.edu' }, { team: 'The Forum', email: 'b@princeton.edu' }], 'TigerOps'), ['a@princeton.edu']);
 });
