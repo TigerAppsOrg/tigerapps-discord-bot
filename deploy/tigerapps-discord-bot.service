@@ -14,6 +14,8 @@ Restart=always
 RestartSec=5
 NoNewPrivileges=true
 UMask=0077
+MemoryMax=512M
+CPUQuota=100%
 
 [Install]
 WantedBy=multi-user.target

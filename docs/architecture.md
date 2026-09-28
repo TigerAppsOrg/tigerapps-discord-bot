@@ -10,9 +10,10 @@ The bot runs as one Node.js service on the `TigerApps-Combined` EC2 instance. Cl
 | `api.tigerapps.org` | Cloudflare DNS and edge | Public HTTPS origin for member OAuth |
 | `tigerapps-discord-bot` tunnel | Cloudflare plus `cloudflared` on EC2 | Forward HTTPS to `http://localhost:3100` |
 | Node.js bot and OAuth listener | `TigerApps-Combined` EC2, loopback port 3100 | Discord Gateway connection, callbacks, command handling |
-| Bot code | `/opt/tigerapps-discord-bot` on EC2 | Installed application and dependencies |
+| Bot code | `/opt/tigerapps-discord-bot` symlink to `/opt/tigerapps-discord-releases/` on EC2 | Versioned application and dependencies |
 | `.env`, `server.json`, `data/state.json` | Encrypted EBS volume at `/var/lib/tigerapps-discord-bot` | Credentials, Discord ID map, account links and action state |
 | Deployment archives | Private, encrypted `tigerapps-discord-bot-deploy-104733724423-us-east-1` S3 bucket | Commit-specific code archives for host updates |
+| Deployment workflow | GitHub Actions, AWS OIDC, and Systems Manager | Test and deploy each update to `main` without static AWS keys |
 | Clean roster workbook | Google Sheets | Member allowlist and `Status Review` flag |
 | Google OAuth clients | Google Auth Platform | Princeton member sign-in and TigerApps mailbox authorization |
 | TigerApps mailbox | Gmail | `/announce` email delivery |
@@ -43,7 +44,29 @@ flowchart LR
 
 Discord interactions arrive through the Gateway connection, so there is no Discord Interactions Endpoint URL. The GitHub App makes outbound API calls on commands and does not subscribe to webhooks, so its webhook can be inactive. The HTTP listener exposes only `/auth/*` callbacks and `/health`; `/health` returns 200 only when the Discord client is ready.
 
-Two systemd units keep the bot and tunnel running after reboot: [`tigerapps-discord-bot.service`](../deploy/tigerapps-discord-bot.service) and [`tigerapps-discord-tunnel.service`](../deploy/tigerapps-discord-tunnel.service). The tunnel token and bot credentials are stored on encrypted EBS; neither is placed in a unit file or repository.
+Two systemd units keep the bot and tunnel running after reboot: [`tigerapps-discord-bot.service`](../deploy/tigerapps-discord-bot.service) and [`tigerapps-discord-tunnel.service`](../deploy/tigerapps-discord-tunnel.service). The bot unit has a 512 MB memory limit and one CPU of quota to constrain its impact on other applications on `TigerApps-Combined`. The tunnel token and bot credentials are stored on encrypted EBS; neither is placed in a unit file or repository.
+
+## Deployment
+
+```mermaid
+sequenceDiagram
+  participant GitHub as GitHub Actions
+  participant AWS as AWS OIDC and S3
+  participant SSM as Systems Manager
+  participant Host as TigerApps-Combined
+  participant Bot as Bot systemd unit
+  GitHub->>GitHub: Test update to main
+  GitHub->>AWS: Assume bot-only role and upload commit archive
+  GitHub->>SSM: Invoke fixed bot deployment document
+  SSM->>Host: Download archive and verify SHA-256
+  Host->>Host: Install dependencies and run tests in new release
+  Host->>Bot: Switch code symlink and restart bot only
+  Host->>Bot: Check localhost health; restore prior release on failure
+  SSM-->>GitHub: Deployment result
+  GitHub->>GitHub: Check public health endpoint
+```
+
+The [main-branch workflow](../.github/workflows/ci.yml) deploys after tests pass. Its OIDC role is restricted to this repository's `main` branch, the bot archive prefix, the [`TigerAppsDiscordBotDeploy` document](../deploy/ssm-deploy.json), and the `TigerApps-Combined` instance. The [host script](../deploy/deploy-on-host.sh) changes only the bot code symlink and `tigerapps-discord-bot.service`; the tunnel, other services, and encrypted runtime volume stay in place. A failed health check restores the previous release. This is a single bot process, so a restart can briefly interrupt command handling.
 
 ## Member onboarding
 
@@ -119,7 +142,7 @@ sequenceDiagram
   end
 ```
 
-`/announce` posts its role mention beneath the Discord message: the selected team's role for team announcements and the general TigerApps member role for club-wide announcements. The private preview does not ping, and email contains no Discord mention. Mail sends from `it.admin@princetonusg.com`. Team mail uses the sender's linked Princeton address as To and Reply-To and CCs the TigerApps mailbox; recipients are BCC. Club-wide Board mail uses the TigerApps mailbox as To and Reply-To. A confirmed announcement can have a partial outcome: if the Discord post succeeded but Gmail's response is uncertain, check the Sent mailbox before retrying.
+`/announce` posts its role mention beneath the Discord message: the selected team's role for team announcements and the general TigerApps member role for club-wide announcements. The private preview does not ping. After the Discord post succeeds, the bot sends a styled HTML email with a plain-text alternative and a link to that post. Mail sends from `it.admin@princetonusg.com`. Team mail uses the sender's linked Princeton address as To and Reply-To and CCs the TigerApps mailbox; recipients are BCC. Club-wide Board mail uses the TigerApps mailbox as To and Reply-To. A confirmed announcement can have a partial outcome: if the Discord post succeeded but Gmail's response is uncertain, check the Sent mailbox before retrying.
 
 ## Permissions and configuration
 

@@ -6,7 +6,7 @@ Onboards new TigerApps Discord members from the Clean roster and provides Board 
 
 - Gives new arrivals `Guest` after Discord's server rules, then offers a persistent **Get started** button and `/onboard`.
 - Verifies the same Discord account and a Princeton Google account, checks the verified email against the live Clean roster, and lets new members confirm or change ordinary team, function, and year roles. Existing members can link their account without changing roles during the first rollout.
-- Supports `/resign`, Board-only `/remove`, Team Lead and Board `/announce` and `/info`, and `/github-invite`. Board can use `/onboard member email` to link an existing Discord member and assign their roster roles after confirmation. Replies containing roster contact details are private. Announcements require a preview and confirmation.
+- Supports `/resign`, Board-only `/remove`, Team Lead and Board `/announce` and `/info`, and `/github-invite`. Board can use `/onboard member email` to link an existing Discord member and assign their roster roles after confirmation. Replies containing roster contact details are private. Announcements require a preview and confirmation; the email links back to its Discord post.
 - Logs command use, onboarding, and roster or delivery exceptions in a private Board channel. `Status Review` is only a flag; Board must update the Clean roster after a removal to prevent later re-onboarding or GitHub re-invitation.
 
 ## Requirements
@@ -46,6 +46,8 @@ Set these through the host's private environment file. The Google service-accoun
 | `SERVER_CONFIG_FILE`, `DATA_FILE` | Optional paths; default to `server.json` and `data/state.json` |
 
 Run `npm ci` and `npm test` before installing the bot. The [systemd units](deploy/) run the bot and Cloudflare Tunnel on EC2. `/health` returns 200 when the Discord client is connected. Start the bot only after the intended roles, channels, and permissions have been tested. The bot registers its six guild commands and posts one onboarding panel on first startup.
+
+Updates merged into `main` run tests and deploy automatically through [GitHub Actions](.github/workflows/ci.yml). The workflow uploads a commit archive to private S3 and invokes a fixed Systems Manager document on the EC2 host. The host installs and tests a new release, switches the bot code symlink, and restarts only the bot service. It restores the prior release if the bot does not become healthy. Credentials and state remain on encrypted EBS; see the [architecture](docs/architecture.md).
 
 For local mailbox authorization, set `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET`, run `npm run authorize-mail`, open the printed Google URL yourself, and sign in as `it.admin@princetonusg.com`. Keep the resulting ignored file private.
 

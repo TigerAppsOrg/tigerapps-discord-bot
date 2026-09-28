@@ -81,16 +81,22 @@ test('announcement previews fit Discord at the modal input limits', () => {
 });
 
 test('mail hides recipients and rejects header injection', () => {
-  const raw = Buffer.from(mailMessage({ subject: 'All hands', body: 'Hello', to: 'lead@princeton.edu',
-    cc: 'it.admin@princetonusg.com', bcc: ['a@princeton.edu', 'b@princeton.edu'] }), 'base64url').toString();
+  const discordUrl = 'https://discord.com/channels/1275140369457348638/1275141595322257428/1553907021882069002';
+  const raw = Buffer.from(mailMessage({ subject: 'All hands', body: 'Hello <team>&', to: 'lead@princeton.edu',
+    cc: 'it.admin@princetonusg.com', bcc: ['a@princeton.edu', 'b@princeton.edu'], discordUrl }), 'base64url').toString();
   assert.match(raw, /Cc: it\.admin@princetonusg\.com/);
   assert.match(raw, /Bcc: a@princeton\.edu,\r\n b@princeton\.edu/);
+  assert.match(raw, /Content-Type: multipart\/alternative/);
+  const html = Buffer.from(raw.match(/Content-Type: text\/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n([\s\S]*?)\r\n--tigerapps-/)[1].replace(/\s/g, ''), 'base64').toString();
+  assert.match(html, /Hello &lt;team&gt;&amp;/);
+  assert.match(html, new RegExp(`href="${discordUrl}"`));
+  assert.match(html, /Open in Discord/);
   const many = Buffer.from(mailMessage({ subject: 'All hands', body: 'Hello', to: 'lead@princeton.edu',
-    bcc: Array.from({ length: 60 }, (_, i) => `member${i}@princeton.edu`) }), 'base64url').toString();
+    bcc: Array.from({ length: 60 }, (_, i) => `member${i}@princeton.edu`), discordUrl }), 'base64url').toString();
   assert.ok(many.split('\r\n\r\n')[0].split('\r\n').every(line => Buffer.byteLength(line) <= 998));
   for (const subject of ['A'.repeat(100), '📣'.repeat(25)]) {
     const message = Buffer.from(mailMessage({ subject, body: 'Hello', to: 'lead@princeton.edu',
-      bcc: ['a@princeton.edu'] }), 'base64url').toString();
+      bcc: ['a@princeton.edu'], discordUrl }), 'base64url').toString();
     const lines = message.split('\r\n');
     const start = lines.findIndex(line => line.startsWith('Subject: '));
     const folded = [lines[start]];
@@ -99,7 +105,8 @@ test('mail hides recipients and rejects header injection', () => {
     assert.equal([...folded.join(' ').matchAll(/=\?UTF-8\?B\?([^?]+)\?=/g)]
       .map(match => Buffer.from(match[1], 'base64').toString()).join(''), subject);
   }
-  assert.throws(() => mailMessage({ subject: 'News', body: 'x', to: 'bad@example.com\r\nBcc: attacker@example.com', bcc: ['a@princeton.edu'] }), /Invalid email/);
+  assert.throws(() => mailMessage({ subject: 'News', body: 'x', to: 'bad@example.com\r\nBcc: attacker@example.com', bcc: ['a@princeton.edu'], discordUrl }), /Invalid email/);
+  assert.throws(() => mailMessage({ subject: 'News', body: 'x', to: 'lead@princeton.edu', bcc: ['a@princeton.edu'], discordUrl: 'https://example.com' }), /Invalid Discord/);
   assert.deepEqual(announcementRecipients([{ team: 'TigerOps, The Forum', email: 'a@princeton.edu' }, { team: 'The Forum', email: 'b@princeton.edu' }], 'TigerOps'), ['a@princeton.edu']);
 });
 

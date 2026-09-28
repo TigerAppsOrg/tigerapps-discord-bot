@@ -140,7 +140,7 @@ export function createBot(config, state, roster, github, mailer) {
     }
     const member = interaction.inCachedGuild() ? interaction.member : await currentMember(interaction.user.id);
     if (!member.joinedTimestamp || member.joinedTimestamp < state.get().rolloutStartedAt) {
-      await interaction.editReply({ content: 'Your Princeton account is linked.' });
+      await interaction.editReply({ content: "You've been verified in the TigerApps discord! You should have access to the correct roles and permissions; feel free to contact leadership if anything is off :)" });
       return;
     }
     const chosen = { ...rosterChoices(person), status: 'ready', expiresAt: Date.now() + 15 * 60_000 };
@@ -433,7 +433,8 @@ export function createBot(config, state, roster, github, mailer) {
     const sent = await channel.send(announcementPost(action, server));
     state.update(data => { data.actions[id].messageId = sent.id; data.actions[id].status = 'sending'; });
     try {
-      const gmailId = await mailer.send({ subject: action.subject, body: action.body, to: action.to, cc: action.cc, bcc: recipients });
+      const gmailId = await mailer.send({ subject: action.subject, body: action.body, to: action.to, cc: action.cc,
+        bcc: recipients, discordUrl: `https://discord.com/channels/${server.guildId}/${channelId}/${sent.id}` });
       state.update(data => { data.actions[id].gmailId = gmailId; });
       await boardNotice(`<@${action.actorId}> announced to ${action.team || 'club-wide'}: Discord and ${recipients.length} BCC email recipients sent.`);
       return { status: 'done', message: `Posted in <#${channelId}> and emailed ${recipients.length} roster members.` };
@@ -573,7 +574,7 @@ export function createBot(config, state, roster, github, mailer) {
     if (!state.get().rolloutStartedAt) state.update(data => { data.rolloutStartedAt = Date.now(); });
     await guild.commands.set(commands(config));
     const channel = guild.channels.cache.get(server.channels.startHere);
-    const welcome = { content: "Welcome to TigerApps. Let's get you set up.",
+    const welcome = { content: 'Welcome to TigerApps! Complete your onboarding here :)',
       components: [row(button('onboard:start', 'Get started'))] };
     let panel = null;
     if (state.get().panelId) {

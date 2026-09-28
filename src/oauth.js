@@ -95,7 +95,7 @@ export function createOAuth(config, state, roster, client, boardNotice) {
         try {
           const guild = await client.guilds.fetch(config.server.guildId);
           const member = await guild.members.fetch(attempt.discordId);
-          if (member.joinedTimestamp < state.get().rolloutStartedAt) next = "You're verified.";
+          if (member.joinedTimestamp < state.get().rolloutStartedAt) next = "You've been verified in the TigerApps discord! You should have access to the correct roles and permissions; feel free to contact leadership if anything is off :)";
         } catch { /* The member can use /onboard for the next step. */ }
         page(response, 200, next, discordLink, true);
         void boardNotice(`<@${attempt.discordId}> linked Princeton account ${email}.`);
