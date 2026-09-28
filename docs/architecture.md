@@ -123,7 +123,7 @@ Board can onboard an existing Discord member with `/onboard member email`. The b
 
 The private `#bot-log` channel records every slash-command invocation and completed onboarding, including Board-assisted links and new Guest access. It also records operation failures and partial outcomes in compact embeds. `/info` results, announcement text, and roster phone numbers are not copied into the log. Guests cannot use `/info`; anyone with the TigerApps member role can see roster contact fields, including phone numbers.
 
-`/info` reads the public current-member photo feed at `https://tigerapps.org/members.json`. The Homepage builds that feed from the headshots already shown on the site and excludes its filler image. The bot uses a photo only for a unique exact roster name and class-year match; when no site photo is available, a linked Discord account can supply its avatar. The card still works if the Homepage is unavailable.
+`/info` reads the public current-member photo feed at `https://tigerapps.org/members.json`. The Homepage builds that feed from portraits already shown on the site, including its placeholder image. The bot uses a portrait only for a unique exact roster name and class-year match; when no site portrait is available, a linked Discord account can supply its avatar. The card still works if the Homepage is unavailable.
 
 ```mermaid
 sequenceDiagram

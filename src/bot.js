@@ -84,16 +84,22 @@ export function memberInfoCard(person, photo) {
   return embed;
 }
 
-export function assistedOnboardingDm(member, actorId, server, ownerId) {
+export function assistedOnboardingDm(member, actorId, server, ordinaryAssigned = false) {
   const lead = member.roles.cache.has(server.roles.teamLead);
   const teams = Object.values(server.teams).filter(team => team.leadIds.includes(member.id));
-  let help = 'Your TigerApps channels are ready. Use `/info` to look up members.';
-  if (member.roles.cache.has(server.roles.board) || member.id === ownerId) {
+  let title = 'Your TigerApps account is linked';
+  let help = 'Ask Board to check your Discord roles if you need member access.';
+  if (member.roles.cache.has(server.roles.board)) {
+    title = 'Your TigerApps access is ready';
     help = 'As a Board member, you can use `/info` for member details, `/announce` for team or club updates, `/github-invite` for organization invites, `/onboard member email` to set up others, and `/remove` to revoke access.';
   } else if (lead) {
+    title = 'Your TigerApps access is ready';
     help = `As a Team Lead, you can use \`/info\` and \`/github-invite\`${teams.length ? ', plus `/announce` for your team.' : '.'}`;
+  } else if (ordinaryAssigned || member.roles.cache.has(server.roles.member)) {
+    title = 'Your TigerApps access is ready';
+    help = 'Your TigerApps channels are ready. Use `/info` to look up members.';
   }
-  return { embeds: [new EmbedBuilder().setColor(accent).setTitle('Your TigerApps access is ready')
+  return { embeds: [new EmbedBuilder().setColor(accent).setTitle(title)
     .setDescription(`<@${actorId}> verified your membership.\n\n${help}`)], allowedMentions: { parse: [] } };
 }
 
@@ -291,7 +297,7 @@ export function createBot(config, state, roster, github, mailer) {
       const id = saveAction(interaction.user.id, { type: 'onboard-member', targetId: target.id, email,
         roster: [person.team, person.role, person.year], boardTarget });
       await interaction.editReply({ content: null, embeds: [rolesCard(`Onboard ${person.name}`,
-        `<@${target.id}> · ${email}\n${boardTarget ? 'Existing Board roles stay unchanged.' : 'Assign these roles?'}`, chosen)],
+        `<@${target.id}> · ${email}\n${boardTarget ? 'Discord roles stay unchanged.' : 'Assign these roles?'}`, chosen)],
       allowedMentions: { parse: [] }, components: confirmButtons(id) });
       return;
     }
@@ -445,7 +451,7 @@ export function createBot(config, state, roster, github, mailer) {
       try { state.link(`board:${person.email}`, person.email, member.id); }
       catch { return 'Account link failed; check for another Discord account linked to this roster email.'; }
     }
-    let roles = 'Existing Board roles unchanged';
+    let roles = 'Discord roles unchanged';
     let ready = true;
     if (!boardTarget) {
       try { await setOrdinaryRoles(member, rosterChoices(person)); roles = 'Ordinary roles assigned'; }
@@ -454,7 +460,7 @@ export function createBot(config, state, roster, github, mailer) {
     const notice = await boardNotice(`<@${action.actorId}> onboarded <@${member.id}> as ${person.email}. ${roles}.`);
     let dm = 'DM not sent while roles need review.';
     if (ready) {
-      try { await member.user.send(assistedOnboardingDm(member, action.actorId, server, guild.ownerId)); dm = 'DM sent.'; }
+      try { await member.user.send(assistedOnboardingDm(member, action.actorId, server, !boardTarget)); dm = 'DM sent.'; }
       catch { dm = 'DM unavailable; tell the member directly.'; await boardNotice(`Could not DM <@${member.id}> after Board onboarding.`); }
     }
     return `Linked ${person.name} to ${person.email}. ${roles}. ${dm} ${notice ? 'Board log updated.' : 'Board log failed; notify Board.'}`;

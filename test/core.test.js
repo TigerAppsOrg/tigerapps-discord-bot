@@ -85,19 +85,26 @@ test('member cards use a unique site headshot and show only allowed onboarding c
   const photos = [{ name: "Member A '28", headshot: '/_astro/member-a.abc.webp' }];
   const photo = memberHeadshot(person, photos);
   assert.equal(photo, 'https://tigerapps.org/_astro/member-a.abc.webp');
+  assert.equal(memberHeadshot(person, [{ ...photos[0], headshot: '/_astro/filler.abc.webp' }]), 'https://tigerapps.org/_astro/filler.abc.webp');
   assert.equal(memberHeadshot(person, [...photos, ...photos]), null);
   assert.equal(memberHeadshot(person, [{ ...photos[0], headshot: 'https://other.example/photo.webp' }]), null);
   const embed = memberInfoCard(person, photo).toJSON();
   assert.equal(embed.thumbnail.url, photo);
   assert.equal(embed.fields.find(field => field.name === 'Phone').value, '555-0100');
   assert.match(embed.fields.find(field => field.name === 'GitHub').value, /github.com\/member-a/);
-  const server = { roles: { board: 'board', teamLead: 'lead' }, teams: { TigerOps: { leadIds: ['lead-user'] } } };
-  const dm = member => assistedOnboardingDm(member, 'board-user', server, 'owner').embeds[0].toJSON().description;
-  assert.match(dm({ id: 'ordinary', roles: { cache: new Set() } }), /verified.*\/info/s);
-  assert.doesNotMatch(dm({ id: 'ordinary', roles: { cache: new Set() } }), /\/remove/);
-  assert.match(dm({ id: 'lead-user', roles: { cache: new Set(['lead']) } }), /\/announce/);
-  assert.doesNotMatch(dm({ id: 'unmapped-lead', roles: { cache: new Set(['lead']) } }), /\/announce/);
-  assert.match(dm({ id: 'board-user', roles: { cache: new Set(['board']) } }), /\/remove/);
+  const server = { roles: { board: 'board', teamLead: 'lead', member: 'member' }, teams: { TigerOps: { leadIds: ['lead-user'] } } };
+  const dm = (member, ordinaryAssigned = false) => assistedOnboardingDm(member, 'board-user', server, ordinaryAssigned).embeds[0].toJSON();
+  assert.match(dm({ id: 'ordinary', roles: { cache: new Set() } }, true).description, /verified.*\/info/s);
+  assert.doesNotMatch(dm({ id: 'ordinary', roles: { cache: new Set() } }, true).description, /\/remove/);
+  assert.match(dm({ id: 'lead-user', roles: { cache: new Set(['lead']) } }).description, /\/announce/);
+  assert.doesNotMatch(dm({ id: 'unmapped-lead', roles: { cache: new Set(['lead']) } }).description, /\/announce/);
+  assert.match(dm({ id: 'board-user', roles: { cache: new Set(['board']) } }).description, /\/remove/);
+  const owner = dm({ id: 'owner', roles: { cache: new Set() } });
+  assert.equal(owner.title, 'Your TigerApps account is linked');
+  assert.doesNotMatch(owner.description, /\/info|\/announce|\/github-invite|\/remove/);
+  const ownerMember = dm({ id: 'owner', roles: { cache: new Set(['member']) } });
+  assert.match(ownerMember.description, /\/info/);
+  assert.doesNotMatch(ownerMember.description, /\/remove/);
 });
 
 test('mail hides recipients and rejects header injection', () => {
