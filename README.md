@@ -6,8 +6,8 @@ Onboards new TigerApps Discord members from the Clean roster and provides Board 
 
 - Gives new arrivals `Guest` after Discord's server rules, then offers a persistent **Get started** button and `/onboard`.
 - Verifies the same Discord account and a Princeton Google account, checks the verified email against the live Clean roster, and lets new members confirm or change ordinary team, function, and year roles. Existing members can link their account without changing roles during the first rollout.
-- Supports `/resign`, Board-only `/remove`, Team Lead and Board `/announce` and `/info`, and `/github-invite`. Board can use `/onboard member email` to link an existing Discord member and assign their roster roles after confirmation. Replies containing roster contact details are private. Announcements require a preview and confirmation; the email links back to its Discord post.
-- Logs command use, onboarding, and roster or delivery exceptions in a private Board channel. `Status Review` is only a flag; Board must update the Clean roster after a removal to prevent later re-onboarding or GitHub re-invitation.
+- Supports `/resign`, Board-only `/remove`, Team Lead and Board `/announce` and `/github-invite`, and private `/info` cards for TigerApps members and leadership. The card includes roster contact fields and uses a matching public Homepage headshot when available. Board can use `/onboard member email` to link an existing Discord member and assign their roster roles after confirmation; the member receives a role-aware DM. Announcements require a preview and confirmation; the email links back to its Discord post.
+- Logs command use, onboarding, and roster or delivery exceptions as compact cards in a private Board channel. `Status Review` is only a flag; Board must update the Clean roster after a removal to prevent later re-onboarding or GitHub re-invitation.
 
 ## Requirements
 

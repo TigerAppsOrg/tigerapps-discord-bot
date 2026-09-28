@@ -108,20 +108,22 @@ sequenceDiagram
 
 The rollout cutoff is saved at first successful startup. Existing server members may link their Princeton account, but onboarding does not change their roles until the existing-member audit. New arrivals receive Guest after screening and can use the public onboarding and help channels. The Clean roster controls whether the person is a member; the chosen ordinary team, function, and year roles determine channel access. Onboarding never grants Board or Team Lead.
 
-Board can onboard an existing Discord member with `/onboard member email`. The bot previews an exact Clean-roster match, then links that Discord account and applies roster-based ordinary roles after Board confirms. This Board-attested link does not require the member's Google sign-in; the private Board log records who made it. Existing Board roles are left alone. If the member later verifies with Google, that identity replaces the Board-attested link for the same Discord account and email.
+Board can onboard an existing Discord member with `/onboard member email`. The bot previews an exact Clean-roster match, then links that Discord account and applies roster-based ordinary roles after Board confirms. This Board-attested link does not require the member's Google sign-in; the private Board log records who made it. On success, the member receives a DM naming the Board member and the commands available to their Discord role. If DMs are closed or role assignment fails, Board sees that outcome instead of a false success notice. Existing Board roles are left alone. If the member later verifies with Google, that identity replaces the Board-attested link for the same Discord account and email.
 
 ## Commands and data access
 
 | Command | Actor | Effect |
 | --- | --- | --- |
 | `/onboard` | Any member; Board with `member` and `email` | Self-service sign-in, or Board-confirmed roster linking and ordinary role assignment for another Discord member |
-| `/info` | Board or Team Lead | Private response with one Clean-roster person's name, team, role, year, GitHub, email, and phone |
+| `/info` | TigerApps member, Board, or Team Lead | Private card with one Clean-roster person's name, team, role, year, GitHub, email, phone, and an available headshot |
 | `/announce` | Board club-wide or for any team; leads for mapped teams | Preview, then post to Discord and send roster email through Gmail with hidden recipients |
 | `/github-invite` | Board or Team Lead | Invite an exact Clean-roster member by GitHub username or Princeton email; acceptance remains pending |
 | `/resign` | Linked non-Board member | Move controllable Discord roles to Alumni, flag Status Review, notify Board; GitHub remains unchanged |
 | `/remove` | Board | Move target to Guest, flag Status Review, attempt GitHub org removal, notify Board of any partial failure |
 
-The private `#bot-log` channel records every slash-command invocation and completed onboarding, including Board-assisted links and new Guest access. It also records operation failures and partial outcomes. `/info` results, announcement text, and roster phone numbers are not copied into the log.
+The private `#bot-log` channel records every slash-command invocation and completed onboarding, including Board-assisted links and new Guest access. It also records operation failures and partial outcomes in compact embeds. `/info` results, announcement text, and roster phone numbers are not copied into the log. Guests cannot use `/info`; anyone with the TigerApps member role can see roster contact fields, including phone numbers.
+
+`/info` reads the public current-member photo feed at `https://tigerapps.org/members.json`. The Homepage builds that feed from the headshots already shown on the site and excludes its filler image. The bot uses a photo only for a unique exact roster name and class-year match; when no site photo is available, a Discord member lookup can use that person's Discord avatar. The card still works if the Homepage is unavailable.
 
 ```mermaid
 sequenceDiagram
