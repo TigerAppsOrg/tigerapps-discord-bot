@@ -61,7 +61,7 @@ sequenceDiagram
   SSM->>Host: Download archive and verify SHA-256
   Host->>Host: Install dependencies and run tests in new release
   Host->>Bot: Switch code symlink and restart bot only
-  Host->>Bot: Check localhost health; restore prior release on failure
+  Host->>Bot: Check localhost health and restore prior release on failure
   SSM-->>GitHub: Deployment result
   GitHub->>GitHub: Check public health endpoint
 ```
