@@ -40,7 +40,7 @@ function choiceMessage(config, chosen) {
 }
 
 export function announcementPost(action, server) {
-  const roleId = server.teams[action.team || 'TigerOps'].roleId;
+  const roleId = action.team ? server.teams[action.team].roleId : server.roles.member;
   return { content: `**${action.subject}**\n${action.body}\n\n<@&${roleId}>`,
     allowedMentions: { parse: [], roles: [roleId] } };
 }

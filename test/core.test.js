@@ -58,14 +58,14 @@ test('role changes apply the final set once and preserve unrelated roles', async
 });
 
 test('announcement posts ping only the selected role', () => {
-  const server = { teams: { TigerOps: { roleId: 'ops-role' }, 'The Forum': { roleId: 'forum-role' } } };
+  const server = { roles: { member: 'club-role' }, teams: { TigerOps: { roleId: 'ops-role' }, 'The Forum': { roleId: 'forum-role' } } };
   const message = { subject: 'Update', body: 'Hello', team: 'The Forum' };
   assert.deepEqual(announcementPost(message, server), {
     content: '**Update**\nHello\n\n<@&forum-role>', allowedMentions: { parse: [], roles: ['forum-role'] },
   });
   const clubPost = announcementPost({ ...message, team: null }, server);
-  assert.match(clubPost.content, /<@&ops-role>$/);
-  assert.deepEqual(clubPost.allowedMentions, { parse: [], roles: ['ops-role'] });
+  assert.match(clubPost.content, /<@&club-role>$/);
+  assert.deepEqual(clubPost.allowedMentions, { parse: [], roles: ['club-role'] });
 });
 
 test('mail hides recipients and rejects header injection', () => {

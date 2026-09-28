@@ -119,7 +119,7 @@ sequenceDiagram
   end
 ```
 
-`/announce` posts its role mention beneath the Discord message: the selected team's role for team announcements and the TigerOps role for club-wide announcements. Club-wide email still reaches the full roster. The private preview does not ping, and email contains no Discord mention. Mail sends from `it.admin@princetonusg.com`. Team mail uses the sender's linked Princeton address as To and Reply-To and CCs the TigerApps mailbox; recipients are BCC. Club-wide Board mail uses the TigerApps mailbox as To and Reply-To. A confirmed announcement can have a partial outcome: if the Discord post succeeded but Gmail's response is uncertain, check the Sent mailbox before retrying.
+`/announce` posts its role mention beneath the Discord message: the selected team's role for team announcements and the general TigerApps member role for club-wide announcements. The private preview does not ping, and email contains no Discord mention. Mail sends from `it.admin@princetonusg.com`. Team mail uses the sender's linked Princeton address as To and Reply-To and CCs the TigerApps mailbox; recipients are BCC. Club-wide Board mail uses the TigerApps mailbox as To and Reply-To. A confirmed announcement can have a partial outcome: if the Discord post succeeded but Gmail's response is uncertain, check the Sent mailbox before retrying.
 
 ## Permissions and configuration
 
