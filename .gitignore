@@ -2,5 +2,8 @@
 .impeccable/
 .env
 .env.*
+server.json
+data/
 node_modules/
+*.log
 .DS_Store

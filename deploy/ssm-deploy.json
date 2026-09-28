@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Deploy only the TigerApps Discord bot on TigerApps-Combined",
+  "parameters": {
+    "ReleaseSha": {
+      "type": "String",
+      "interpolationType": "ENV_VAR",
+      "allowedPattern": "^[0-9a-f]{40}$"
+    },
+    "Sha256": {
+      "type": "String",
+      "interpolationType": "ENV_VAR",
+      "allowedPattern": "^[0-9a-f]{64}$"
+    },
+    "ArtifactUrl": {
+      "type": "String",
+      "interpolationType": "ENV_VAR",
+      "allowedPattern": "^https://tigerapps-discord-bot-deploy-104733724423-us-east-1\\.s3\\.us-east-1\\.amazonaws\\.com/releases/[0-9a-f]{40}\\.tar\\.gz\\?X-Amz-.*$"
+    }
+  },
+  "mainSteps": [{
+    "action": "aws:runShellScript",
+    "name": "deployBot",
+    "precondition": { "StringEquals": ["platformType", "Linux"] },
+    "inputs": {
+      "timeoutSeconds": "600",
+      "runCommand": [
+        "bash /usr/local/sbin/tigerapps-discord-deploy \"$SSM_ReleaseSha\" \"$SSM_Sha256\" \"$SSM_ArtifactUrl\""
+      ]
+    }
+  }]
+}

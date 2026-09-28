@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject"],
+      "Resource": "arn:aws:s3:::tigerapps-discord-bot-deploy-104733724423-us-east-1/releases/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": [
+        "arn:aws:ssm:us-east-1:104733724423:document/TigerAppsDiscordBotDeploy",
+        "arn:aws:ec2:us-east-1:104733724423:instance/i-0b2bfc5624ab3f9bf"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ssm:GetCommandInvocation",
+      "Resource": "*"
+    }
+  ]
+}
