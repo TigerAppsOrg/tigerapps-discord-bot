@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, validateServerConfig } from '../src/config.js';
-import { createBot } from '../src/bot.js';
+import { createBot, roleChange } from '../src/bot.js';
 import { Github, announcementRecipients, githubHandle, mailMessage } from '../src/integrations.js';
 import { verifiedPrincetonEmail } from '../src/oauth.js';
 import { Roster, parseRoster, rosterFunctions, rosterTeams } from '../src/roster.js';
@@ -40,6 +40,18 @@ test('one Princeton account links to one Discord account across reloads', () => 
     assert.throws(() => state.link('google-2', 'b@princeton.edu', 'discord-1'), /already linked/);
     assert.throws(() => state.link('google-2', 'a@princeton.edu', 'discord-2'), /already linked/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('role changes apply the final set once and preserve unrelated roles', async () => {
+  let updated;
+  let calls = 0;
+  const member = { guild: { id: 'guild' }, roles: {
+    cache: new Map([['guild', {}], ['guest', {}], ['unrelated', {}]]),
+    set: async ids => { updated = ids; calls++; },
+  } };
+  await roleChange(member, ['member'], ['guest', 'member']);
+  assert.deepEqual(new Set(updated), new Set(['member', 'unrelated']));
+  assert.equal(calls, 1);
 });
 
 test('mail hides recipients and rejects header injection', () => {

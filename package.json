@@ -6,7 +6,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node src/index.js",
-    "authorize-mail": "node scripts/authorize-mail.js",
+    "authorize-mail": "node --env-file=.env scripts/authorize-mail.js",
     "test": "node --test"
   },
   "dependencies": {

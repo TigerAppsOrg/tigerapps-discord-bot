@@ -58,6 +58,12 @@ function commands(config) {
   ].map(command => command.toJSON());
 }
 
+export async function roleChange(member, desired, revoke) {
+  const roles = [...new Set([...member.roles.cache.keys()]
+    .filter(id => id !== member.guild.id && !revoke.includes(id)).concat(desired))];
+  await member.roles.set(roles);
+}
+
 export function createBot(config, state, roster, github, mailer) {
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
   const oauth = createOAuth(config, state, roster, client);
@@ -79,13 +85,6 @@ export function createBot(config, state, roster, github, mailer) {
   const isBoard = member => member.roles.cache.has(server.roles.board);
   const isLead = member => member.roles.cache.has(server.roles.teamLead);
   const leadsFor = member => Object.entries(server.teams).filter(([, team]) => team.leadIds.includes(member.id)).map(([name]) => name);
-
-  async function roleChange(member, desired, revoke) {
-    const add = desired.filter(id => !member.roles.cache.has(id));
-    const remove = revoke.filter(id => member.roles.cache.has(id) && !desired.includes(id));
-    if (add.length) await member.roles.add(add);
-    if (remove.length) await member.roles.remove(remove);
-  }
 
   async function guest(member) {
     if (!state.get().rolloutStartedAt || member.joinedTimestamp < state.get().rolloutStartedAt ||
