@@ -313,7 +313,11 @@ export function createBot(config, state, roster, github, mailer) {
         const response = await fetch('https://tigerapps.org/members.json', { signal: AbortSignal.timeout(2500) });
         if (response.ok) photo = memberHeadshot(person, await response.json());
       } catch { /* Site photos are optional. */ }
-      photo ||= selectedUser?.displayAvatarURL?.({ size: 256 });
+      if (!photo) {
+        const discordId = selectedUser?.id || Object.values(state.get().links).find(link => link.email === email)?.discordId;
+        const user = selectedUser || (discordId ? await client.users.fetch(discordId).catch(() => null) : null);
+        photo = user?.displayAvatarURL?.({ size: 256 });
+      }
       await interaction.editReply({ allowedMentions: { parse: [] }, embeds: [memberInfoCard(person, photo)] });
       return;
     }

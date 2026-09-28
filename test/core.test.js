@@ -247,6 +247,13 @@ test('command previews, audit logs, and cancellation guards', async () => {
         inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['member']) } },
         options: { getUser: () => null, getString: () => 'a@princeton.edu' } });
       assert.equal(info.embeds[0].toJSON().thumbnail.url, 'https://tigerapps.org/_astro/member-a.abc.webp');
+      state.link('google-member-a', 'a@princeton.edu', 'target');
+      globalThis.fetch = async () => ({ ok: false });
+      client.users.fetch = async () => ({ displayAvatarURL: () => 'https://cdn.discordapp.com/avatars/target/photo.webp' });
+      const fallback = await emit({ isChatInputCommand: () => true, commandName: 'info',
+        inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['member']) } },
+        options: { getUser: () => null, getString: () => 'a@princeton.edu' } });
+      assert.equal(fallback.embeds[0].toJSON().thumbnail.url, 'https://cdn.discordapp.com/avatars/target/photo.webp');
       const originalError = console.error;
       try {
         console.error = () => {};
