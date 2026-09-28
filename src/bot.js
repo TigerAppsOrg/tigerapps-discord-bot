@@ -631,6 +631,7 @@ export function createBot(config, state, roster, github, mailer) {
       const channel = guild.channels.cache.get(id);
       if (!channel?.isTextBased() || !channel.send || !channel.permissionsFor(me)?.has([
         PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory,
+        PermissionsBitField.Flags.EmbedLinks,
       ])) throw new Error(`Bot needs text-channel access in ${id}.`);
     }
     if (!state.get().rolloutStartedAt) state.update(data => { data.rolloutStartedAt = Date.now(); });
