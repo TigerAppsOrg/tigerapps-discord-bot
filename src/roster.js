@@ -1,6 +1,6 @@
 import { JWT } from 'google-auth-library';
 
-const sheet = "'Fall 2026 Teams (Clean)'";
+const sheet = "'Fall 2026 Teams'";
 const headers = ['Name', 'Team', 'Role', 'Year', 'Phone', 'GitHub', 'Website', 'Email'];
 
 export function parseRoster(values) {
