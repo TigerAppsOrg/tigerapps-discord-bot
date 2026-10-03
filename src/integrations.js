@@ -138,3 +138,115 @@ export class Mailer {
 }
 
 export const mailSender = sender;
+
+export const timeZone = 'America/New_York';
+const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+const pad = value => String(value).padStart(2, '0');
+
+// wall-clock Eastern time to an exact instant
+export function easternInstant(date, time) {
+  const offset = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' })
+    .formatToParts(new Date(`${date}T${time}:00Z`)).find(part => part.type === 'timeZoneName').value.slice(3);
+  return new Date(`${date}T${time}:00${offset || 'Z'}`);
+}
+
+export function parseWhen(dateText, timeText, now = new Date()) {
+  const text = dateText.trim().toLowerCase().replace(/^(mon|tues?|wed|thu|thurs?|fri|sat|sun)(day|nesday|rsday|urday)?\.?,?\s+/, '').replace(/(\d)(st|nd|rd|th)\b/, '$1');
+  let year, month, day, match;
+  if ((match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) [year, month, day] = match.slice(1).map(Number);
+  else if ((match = text.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?$/))) {
+    [month, day] = [Number(match[1]), Number(match[2])];
+    if (match[3]) year = Number(match[3].length === 2 ? `20${match[3]}` : match[3]);
+  } else if ((match = text.match(/^([a-z]+)\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?$/)) &&
+      (month = months.findIndex(name => [name, name.slice(0, 3), name.slice(0, 4)].includes(match[1])) + 1)) {
+    day = Number(match[2]);
+    if (match[3]) year = Number(match[3]);
+  } else throw new Error('Use a date like Oct 8 or 10/8.');
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone }).format(now);
+  if (!year) {
+    year = Number(today.slice(0, 4));
+    if (`${year}-${pad(month)}-${pad(day)}` < today) year++;
+  }
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) throw new Error('That date does not exist.');
+  const date = `${year}-${pad(month)}-${pad(day)}`;
+
+  match = timeText.toLowerCase().replace(/\s+/g, '').replace(/[–—]|to/g, '-')
+    .match(/^(\d{1,2})(?::(\d{2}))?(am|pm)?(?:-(\d{1,2})(?::(\d{2}))?(am|pm)?)?$/);
+  if (!match) throw new Error('Use a time like 6:45-7:15pm.');
+  const minutes = (hour, minute = '0', half) => {
+    hour = Number(hour);
+    if (Number(minute) > 59 || hour > 23 || (half && (hour < 1 || hour > 12))) throw new Error('Use a time like 6:45-7:15pm.');
+    if (!half && hour >= 1 && hour <= 12) throw new Error('Add am or pm to the time.');
+    return (half ? hour % 12 + (half === 'pm' ? 12 : 0) : hour) * 60 + Number(minute);
+  };
+  let start = minutes(match[1], match[2], match[3] || match[6]);
+  let end = match[4] ? minutes(match[4], match[5], match[6] || match[3]) : start + 60;
+  // 11-1pm means 11am to 1pm
+  if (!match[3] && match[6] && start >= end) start -= 12 * 60;
+  if (end <= start || end >= 24 * 60) throw new Error('The event needs to end after it starts, on the same day.');
+  const clock = value => `${pad(Math.floor(value / 60))}:${pad(value % 60)}`;
+  const when = { date, start: clock(start), end: clock(end) };
+  if (easternInstant(date, when.start) <= now) throw new Error('That time has already passed.');
+  return when;
+}
+
+// recurring events stop at the end of the semester they start in
+export function semesterEnd(date) {
+  return `${date.slice(0, 4)}-${Number(date.slice(5, 7)) >= 6 ? '12-20' : '05-31'}`;
+}
+
+export function calendarEvent({ title, location, date, start, end, repeat }) {
+  return {
+    summary: title, location,
+    start: { dateTime: `${date}T${start}:00`, timeZone },
+    end: { dateTime: `${date}T${end}:00`, timeZone },
+    ...(repeat ? { recurrence: [`RRULE:FREQ=WEEKLY;INTERVAL=${repeat};UNTIL=${semesterEnd(date).replaceAll('-', '')}T235959Z`] } : {}),
+  };
+}
+
+export class Calendar {
+  constructor(config) {
+    this.id = config.calendarId;
+    this.auth = new OAuth2Client(config.gmailClientId, config.gmailClientSecret);
+    this.auth.setCredentials({ refresh_token: config.gmailRefreshToken });
+  }
+
+  async request(path, options = {}) {
+    const { token } = await this.auth.getAccessToken();
+    const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.id)}${path}`, {
+      ...options, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => null))?.error?.message;
+      throw new Error(`Calendar request failed (${response.status})${detail ? `: ${detail}` : ''}`);
+    }
+    return response.status === 204 ? {} : response.json();
+  }
+
+  create(event) {
+    return this.request('/events', { method: 'POST', body: JSON.stringify(event) });
+  }
+
+  // the bot owns every Princeton address on this calendar and leaves other sharing alone
+  async share(readers, writers) {
+    const desired = new Map([...readers.map(email => [email, 'reader']), ...writers.map(email => [email, 'writer'])]);
+    // one page of 250 sharing rules covers the club
+    const current = ((await this.request('/acl?maxResults=250')).items || [])
+      .filter(rule => rule.scope?.type === 'user' && /@princeton\.edu$/.test(rule.scope.value));
+    const changes = { added: 0, changed: 0, removed: 0 };
+    for (const rule of current.filter(rule => !desired.has(rule.scope.value))) {
+      await this.request(`/acl/${encodeURIComponent(rule.id)}`, { method: 'DELETE' });
+      changes.removed++;
+    }
+    for (const [email, role] of desired) {
+      const rule = current.find(rule => rule.scope.value === email);
+      if (rule?.role === role) continue;
+      await this.request(rule ? `/acl/${encodeURIComponent(rule.id)}` : '/acl?sendNotifications=true', {
+        method: rule ? 'PUT' : 'POST', body: JSON.stringify({ role, scope: { type: 'user', value: email } }),
+      });
+      changes[rule ? 'changed' : 'added']++;
+    }
+    return changes;
+  }
+}

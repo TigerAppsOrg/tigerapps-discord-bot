@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits,
-  MessageFlags, ModalBuilder, PermissionsBitField, SlashCommandBuilder,
+  GuildScheduledEventEntityType, GuildScheduledEventPrivacyLevel, GuildScheduledEventRecurrenceRuleFrequency,
+  LabelBuilder, MessageFlags, ModalBuilder, PermissionsBitField, RadioGroupBuilder, RadioGroupOptionBuilder, SlashCommandBuilder,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { managedRoleIds } from './config.js';
-import { announcementRecipients, githubHandle, mailSender } from './integrations.js';
+import { announcementRecipients, calendarEvent, easternInstant, githubHandle, mailSender, parseWhen, semesterEnd } from './integrations.js';
 import { createOAuth } from './oauth.js';
 import { rosterFunctions, rosterTeams } from './roster.js';
 
@@ -72,6 +73,40 @@ export function announcementPreview(action, server, recipients) {
   return `Preview · <#${channelId}> · ${recipients} BCC emails\n\n${announcementPost(action, server).content}`;
 }
 
+export function eventSummary({ location, date, start, end, repeat }) {
+  const unix = time => Math.floor(easternInstant(date, time).getTime() / 1000);
+  const until = new Date(`${semesterEnd(date)}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return [`<t:${unix(start)}:F> – <t:${unix(end)}:t>`, repeat ? `${repeat === 1 ? 'Weekly' : 'Every 2 weeks'} until ${until}` : null, location]
+    .filter(Boolean).join('\n');
+}
+
+export function discordEvent({ title, location, date, start, end, repeat }) {
+  const startAt = easternInstant(date, start);
+  return {
+    name: title, scheduledStartTime: startAt, scheduledEndTime: easternInstant(date, end), entityMetadata: { location },
+    privacyLevel: GuildScheduledEventPrivacyLevel.GuildOnly, entityType: GuildScheduledEventEntityType.External,
+    // Discord counts weekdays from Monday
+    ...(repeat ? { recurrenceRule: { startAt, frequency: GuildScheduledEventRecurrenceRuleFrequency.Weekly, interval: repeat,
+      byWeekday: [(new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7] } } : {}),
+  };
+}
+
+function eventForm(id, values = {}) {
+  const text = (customId, label, placeholder, max) => {
+    const input = new TextInputBuilder().setCustomId(customId).setStyle(TextInputStyle.Short)
+      .setPlaceholder(placeholder).setMaxLength(max).setRequired(true);
+    if (values[customId]) input.setValue(values[customId]);
+    return new LabelBuilder().setLabel(label).setTextInputComponent(input);
+  };
+  const repeat = new RadioGroupBuilder().setCustomId('repeat').setRequired(true).addOptions(
+    [['Once', '0'], ['Weekly', '1'], ['Every 2 weeks', '2']].map(([label, value]) =>
+      new RadioGroupOptionBuilder().setLabel(label).setValue(value).setDefault(value === (values.repeat || '0'))));
+  return new ModalBuilder().setCustomId(`event:${id}`).setTitle('New event').addLabelComponents(
+    text('title', 'Title', 'Board office hours', 100), text('date', 'Date', 'Thu Oct 8', 30),
+    text('time', 'Time', '6:45-7:15pm', 30), text('location', 'Location', 'Lewis 122', 100),
+    new LabelBuilder().setLabel('Repeats').setRadioGroupComponent(repeat));
+}
+
 export function memberHeadshot(person, members) {
   if (!person.name || !person.year) return null;
   const name = `${person.name.trim()} '${person.year.slice(-2)}`.toLowerCase();
@@ -101,10 +136,10 @@ export function assistedOnboardingDm(member, actorId, server, ordinaryAssigned =
   let help = 'Ask Board to check your Discord roles if you need member access.';
   if (member.roles.cache.has(server.roles.board)) {
     title = 'Your TigerApps access is ready';
-    help = 'As a Board member, you can use `/info` for member details, `/announce` for team or club updates, `/github-invite` for organization invites, `/onboard member email` to set up others, and `/remove` to revoke access.';
+    help = 'As a Board member, you can use `/info` for member details, `/announce` for team or club updates, `/event` for the club calendar, `/github-invite` for organization invites, `/onboard member email` to set up others, and `/remove` to revoke access.';
   } else if (lead) {
     title = 'Your TigerApps access is ready';
-    help = `As a Team Lead, you can use \`/info\` and \`/github-invite\`${teams.length ? ', plus `/announce` for your team.' : '.'}`;
+    help = `As a Team Lead, you can use \`/info\`, \`/event\`, and \`/github-invite\`${teams.length ? ', plus `/announce` for your team.' : '.'}`;
   } else if (ordinaryAssigned || member.roles.cache.has(server.roles.member)) {
     title = 'Your TigerApps access is ready';
     help = 'Your TigerApps channels are ready. Use `/info` to look up members.';
@@ -125,6 +160,7 @@ function commands(config) {
       .addStringOption(option => option.setName('reason').setDescription('Reason for removal').setRequired(true).setMaxLength(300)),
     new SlashCommandBuilder().setName('announce').setDescription('Announce to TigerApps or a team')
       .addStringOption(option => option.setName('team').setDescription('Team; Board may omit for club-wide').addChoices(...teamChoices)),
+    new SlashCommandBuilder().setName('event').setDescription('Add an event to the TigerApps calendar'),
     new SlashCommandBuilder().setName('info').setDescription('Look up a roster member privately')
       .addUserOption(option => option.setName('member').setDescription('Linked Discord member'))
       .addStringOption(option => option.setName('email').setDescription('Exact Princeton roster email')),
@@ -140,7 +176,7 @@ export async function roleChange(member, desired, revoke) {
   await member.roles.set(roles);
 }
 
-export function createBot(config, state, roster, github, mailer) {
+export function createBot(config, state, roster, github, mailer, calendar) {
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
   const oauth = createOAuth(config, state, roster, client, boardNotice);
   const { server } = config;
@@ -282,9 +318,8 @@ export function createBot(config, state, roster, github, mailer) {
     return id;
   }
 
-  function confirmButtons(id, test = false) {
-    return [row(button(`confirm:${id}`, 'Confirm'),
-      ...(test ? [button(`test:${id}`, 'Send test', ButtonStyle.Secondary)] : []),
+  function confirmButtons(id, extra) {
+    return [row(button(`confirm:${id}`, 'Confirm'), ...(extra ? [extra] : []),
       button(`cancel:${id}`, 'Cancel', ButtonStyle.Secondary))];
   }
 
@@ -378,6 +413,11 @@ export function createBot(config, state, roster, github, mailer) {
       await interaction.editReply({ ...card(`Invite ${person.name}?`, `GitHub: ${githubHandle(person.github) || person.email}\nAccess begins after they accept. Organization base access is write.`), components: confirmButtons(id) });
       return;
     }
+    if (interaction.commandName === 'event') {
+      if (!isBoard(actor) && !isLead(actor)) throw new UserError('Only Board and Team Leads can add events.');
+      await interaction.showModal(eventForm(saveAction(actor.id, { type: 'event', status: 'input' })));
+      return;
+    }
     if (interaction.commandName === 'announce') {
       const requested = interaction.options.getString('team');
       let team = null;
@@ -427,7 +467,39 @@ export function createBot(config, state, roster, github, mailer) {
       });
     });
     await interaction.editReply({ ...card('Review announcement', announcementPreview({ subject, body, team: action.team }, server, recipients.length)),
-      allowedMentions: { parse: [] }, components: confirmButtons(id, true) });
+      allowedMentions: { parse: [] }, components: confirmButtons(id, button(`test:${id}`, 'Send test', ButtonStyle.Secondary)) });
+  }
+
+  async function eventModal(interaction) {
+    const id = interaction.customId.slice('event:'.length);
+    const action = state.get().actions[id];
+    const respond = message => interaction.isFromMessage() ? interaction.update(message) : interaction.reply({ flags: ephemeral, ...message });
+    if (!action || action.actorId !== interaction.user.id || action.status !== 'input' || action.expiresAt < Date.now()) {
+      await respond({ ...card('Event expired', 'Run `/event` again.', 0xe19a35), components: [] }); return;
+    }
+    const input = Object.fromEntries(['title', 'date', 'time', 'location'].map(name => [name, interaction.fields.getTextInputValue(name).trim()]));
+    input.repeat = interaction.fields.getRadioGroup('repeat') || '0';
+    let details;
+    try {
+      if (!input.title || !input.location) throw new Error('The event needs a title and location.');
+      details = { title: input.title, location: input.location, repeat: Number(input.repeat), ...parseWhen(input.date, input.time) };
+    } catch (error) {
+      state.update(data => { data.actions[id].input = input; });
+      await respond({ ...card('Check the event', error.message, 0xe19a35), components: [row(button(`edit:${id}`, 'Edit'))] });
+      return;
+    }
+    state.update(data => { Object.assign(data.actions[id], { ...details, input, status: 'ready' }); });
+    await respond({ ...card(details.title, eventSummary(details)), components: confirmButtons(id, button(`edit:${id}`, 'Edit', ButtonStyle.Secondary)) });
+  }
+
+  async function editEvent(interaction) {
+    const id = interaction.customId.slice('edit:'.length);
+    const action = state.get().actions[id];
+    if (!action || action.actorId !== interaction.user.id || !['input', 'ready'].includes(action.status) || action.expiresAt < Date.now()) {
+      await interaction.reply({ flags: ephemeral, ...card('Event expired', 'Run `/event` again.', 0xe19a35) }); return;
+    }
+    state.update(data => { Object.assign(data.actions[id], { status: 'input', expiresAt: Date.now() + 10 * 60_000 }); });
+    await interaction.showModal(eventForm(id, action.input));
   }
 
   async function testAnnouncement(interaction) {
@@ -546,6 +618,17 @@ export function createBot(config, state, roster, github, mailer) {
     }
   }
 
+  async function addEvent(action) {
+    const created = await calendar.create(calendarEvent(action));
+    let discord = 'It is also in the server events.';
+    let failure = '';
+    try { await guild.scheduledEvents.create(discordEvent(action)); }
+    catch (error) { discord = 'The Discord event could not be created; Board has been notified.'; failure = ` Discord event failed: ${error.message}`; }
+    await boardNotice(`<@${action.actorId}> added "${action.title}" to the TigerApps calendar.${failure}`);
+    return { status: 'done', message: `Added to the TigerApps calendar. ${discord}`,
+      components: [row(new ButtonBuilder().setLabel('Open in Google Calendar').setStyle(ButtonStyle.Link).setURL(created.htmlLink))] };
+  }
+
   async function actionButton(interaction) {
     const [verb, id] = interaction.customId.split(':');
     const action = state.get().actions[id];
@@ -562,7 +645,7 @@ export function createBot(config, state, roster, github, mailer) {
     await interaction.deferUpdate();
     const actor = await currentMember(interaction.user.id);
     if ((['remove', 'onboard-member'].includes(action.type) && !isBoard(actor)) ||
-        (action.type === 'github-invite' && !isBoard(actor) && !isLead(actor)) ||
+        (['github-invite', 'event'].includes(action.type) && !isBoard(actor) && !isLead(actor)) ||
         (action.type === 'announce' && !canAnnounce(actor, action.team))) {
       throw new UserError('Your command access changed.');
     }
@@ -584,9 +667,10 @@ export function createBot(config, state, roster, github, mailer) {
       if (action.type === 'remove') result = { status: 'done', message: await remove(action) };
       if (action.type === 'github-invite') result = { status: 'done', message: await invite(action) };
       if (action.type === 'announce') result = await announce(id, action);
+      if (action.type === 'event') result = await addEvent(action);
       state.update(data => { data.actions[id].status = result.status; });
       await interaction.editReply({ ...card(result.status === 'uncertain' ? 'Needs review' : 'Update', result.message,
-        result.status === 'uncertain' ? 0xe19a35 : accent), components: [] });
+        result.status === 'uncertain' ? 0xe19a35 : accent), components: result.components || [] });
     } catch (error) {
       state.update(data => { data.actions[id].status = 'uncertain'; });
       await boardNotice(`Action ${action.type} requested by <@${action.actorId}> had an uncertain result (${error.message}). Check Discord, roster, GitHub, or Gmail before repeating it.`);
@@ -604,6 +688,7 @@ export function createBot(config, state, roster, github, mailer) {
         finally { void boardNotice(`<@${interaction.user.id}> invoked /${interaction.commandName}.`); }
       }
       else if (interaction.isModalSubmit() && interaction.customId.startsWith('announce:')) await announcementModal(interaction);
+      else if (interaction.isModalSubmit() && interaction.customId.startsWith('event:')) await eventModal(interaction);
       else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('onboard:')) await selection(interaction);
       else if (interaction.isButton()) {
         if (interaction.customId === 'onboard:start') await startHere(interaction);
@@ -618,6 +703,7 @@ export function createBot(config, state, roster, github, mailer) {
             components: [row(new ButtonBuilder().setLabel('Verify').setStyle(ButtonStyle.Link).setURL(url))] });
         } else if (interaction.customId === 'onboard:confirm') await confirmOnboarding(interaction);
         else if (interaction.customId.startsWith('test:')) await testAnnouncement(interaction);
+        else if (interaction.customId.startsWith('edit:')) await editEvent(interaction);
         else if (interaction.customId.startsWith('confirm:') || interaction.customId.startsWith('cancel:')) await actionButton(interaction);
       }
     } catch (error) {
@@ -642,6 +728,14 @@ export function createBot(config, state, roster, github, mailer) {
     const newMissing = missing.filter(email => !state.get().missingRoster.includes(email));
     if (newMissing.length && !(await boardNotice(`Linked Princeton emails missing from the roster: ${newMissing.join(', ')}. Review their Discord access manually.`))) return;
     state.update(data => { data.missingRoster = missing; });
+  }
+
+  async function shareCalendar() {
+    const writers = [...new Set((await guild.members.fetch()).filter(member => isBoard(member) || isLead(member))
+      .map(member => state.linkedByDiscord(member.id)?.email).filter(email => email?.endsWith('@princeton.edu')))];
+    const readers = announcementRecipients(await roster.all(), null).filter(email => !writers.includes(email));
+    const { added, changed, removed } = await calendar.share(readers, writers);
+    if (added + changed + removed) await boardNotice(`Calendar sharing updated: ${added} added, ${changed} changed, ${removed} removed.`);
   }
 
   async function ready() {
@@ -689,7 +783,9 @@ export function createBot(config, state, roster, github, mailer) {
       }
     }
     try { await checkMissingRoster(); } catch { console.error('Initial roster review failed.'); }
-    setInterval(() => { state.cleanExpired(); checkMissingRoster().catch(() => console.error('Roster review failed.')); }, 24 * 60 * 60_000).unref();
+    const share = () => shareCalendar().catch(error => boardNotice(`Calendar sharing failed: ${error.message}`));
+    void share();
+    setInterval(() => { state.cleanExpired(); checkMissingRoster().catch(() => console.error('Roster review failed.')); void share(); }, 24 * 60 * 60_000).unref();
     console.log('TigerApps bot ready.');
   }
 
