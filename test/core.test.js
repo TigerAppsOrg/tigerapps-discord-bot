@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, validateServerConfig } from '../src/config.js';
-import { announcementPost, announcementPreview, assistedOnboardingDm, createBot, memberHeadshot, memberInfoCard, roleChange } from '../src/bot.js';
+import { announcementPost, announcementPreview, assistedOnboardingDm, createBot, failureMessage, memberHeadshot, memberInfoCard, roleChange } from '../src/bot.js';
 import { Github, announcementRecipients, githubHandle, mailMessage } from '../src/integrations.js';
 import { verifiedPrincetonEmail } from '../src/oauth.js';
 import { Roster, parseRoster, rosterFunctions, rosterTeams } from '../src/roster.js';
@@ -134,6 +134,9 @@ test('mail hides recipients and rejects header injection', () => {
   }
   assert.throws(() => mailMessage({ subject: 'News', body: 'x', to: 'bad@example.com\r\nBcc: attacker@example.com', bcc: ['a@princeton.edu'], discordUrl }), /Invalid email/);
   assert.throws(() => mailMessage({ subject: 'News', body: 'x', to: 'lead@princeton.edu', bcc: ['a@princeton.edu'], discordUrl: 'https://example.com' }), /Invalid Discord/);
+  const test = Buffer.from(mailMessage({ subject: '[Test] News', body: 'Hello', to: 'lead@princeton.edu' }), 'base64url').toString();
+  assert.doesNotMatch(test, /Bcc:/);
+  assert.doesNotMatch(test, /Open in Discord/);
   assert.deepEqual(announcementRecipients([{ team: 'TigerOps, The Forum', email: 'a@princeton.edu' }, { team: 'The Forum', email: 'b@princeton.edu' }], 'TigerOps'), ['a@princeton.edu']);
 });
 
@@ -301,13 +304,59 @@ test('command previews, audit logs, and cancellation guards', async () => {
       const ambiguous = await emit({ isChatInputCommand: () => true, commandName: 'github-invite',
         inCachedGuild: () => true, member: { id: 'user', roles: { cache: new Set(['board']) } },
         options: { getString: name => name === 'username' ? 'member-a' : null } });
-      assert.match(display(ambiguous), /must match one Clean-roster member/);
+      assert.match(display(ambiguous), /must match one roster member/);
     } finally { console.error = originalError; }
     await new Promise(resolve => setImmediate(resolve));
     assert.ok(logs.some(message => message.includes('invoked /onboard')));
     assert.ok(logs.some(message => message.includes('invoked /announce')));
     assert.ok(logs.some(message => message.includes('invoked /github-invite')));
   } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('announcement test sends reach only the sender and list the real recipients', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tigerapps-test-send-'));
+  const state = new State(join(dir, 'state.json'));
+  const rows = [{ name: 'Member A', email: 'a@princeton.edu', team: 'TigerOps' }, { name: 'Member B', email: 'b@princeton.edu', team: 'The Forum' }];
+  const sent = [];
+  const { client } = createBot({ baseUrl: 'http://localhost:3000', server: { guildId: 'guild', roles: {}, channels: {}, teams: {} } }, state,
+    { all: async () => rows }, {}, { send: async message => { sent.push(message); } });
+  client.channels.fetch = async () => ({ send: async () => {} });
+  state.link('google-lead', 'lead@princeton.edu', 'lead');
+  state.update(data => { data.actions.ann = { type: 'announce', actorId: 'lead', team: 'TigerOps', subject: 'Meeting', body: 'Hello',
+    status: 'ready', expiresAt: Date.now() + 60_000 }; });
+  const emit = () => new Promise(resolve => client.emit('interactionCreate', { guildId: 'guild', user: { id: 'lead' }, customId: 'test:ann',
+    isChatInputCommand: () => false, isModalSubmit: () => false, isStringSelectMenu: () => false, isButton: () => true,
+    deferReply: async () => {}, deferred: true, editReply: resolve, followUp: resolve, reply: resolve }));
+  try {
+    const reply = await emit();
+    assert.equal(reply.embeds[0].toJSON().title, 'Test sent');
+    assert.deepEqual({ to: sent[0].to, subject: sent[0].subject, bcc: sent[0].bcc, cc: sent[0].cc }, { to: 'lead@princeton.edu', subject: '[Test] Meeting', bcc: undefined, cc: undefined });
+    assert.match(sent[0].body, /Real recipients \(1\):\nMember A <a@princeton\.edu>$/);
+    assert.equal(state.get().actions.ann.status, 'ready');
+  } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('unexpected failures explain themselves and report details to Board', async () => {
+  assert.match(failureMessage(new Error('Roster request failed (400): Unable to parse range')), /roster sheet/);
+  assert.match(failureMessage(new Error('Gmail send outcome needs review (401)')), /send email/);
+  assert.match(failureMessage(Object.assign(new Error('Missing Permissions'), { code: 50013 })), /Discord permission/);
+  const dir = mkdtempSync(join(tmpdir(), 'tigerapps-failure-'));
+  const state = new State(join(dir, 'state.json'));
+  const { client } = createBot({ baseUrl: 'http://localhost:3000', server: { guildId: 'guild', roles: { board: 'board', teamLead: 'lead' }, channels: {}, teams: {} } }, state,
+    { all: async () => { throw new Error('Roster request failed (400): Unable to parse range'); } }, {}, {});
+  const logs = [];
+  client.channels.fetch = async () => ({ send: async message => { logs.push(message.embeds[0].toJSON().description); } });
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const reply = await new Promise(resolve => client.emit('interactionCreate', { guildId: 'guild', user: { id: 'user' },
+      isChatInputCommand: () => true, commandName: 'github-invite', inCachedGuild: () => true,
+      member: { id: 'user', roles: { cache: new Set(['board']) } }, options: { getString: name => name === 'username' ? 'member-a' : null },
+      deferReply: async function () { this.deferred = true; }, editReply: resolve, isModalSubmit: () => false }));
+    assert.match(reply.embeds[0].toJSON().description, /couldn't read the roster sheet/);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(logs.some(message => message.includes('/github-invite failed for <@user>: Roster request failed (400): Unable to parse range')));
+  } finally { console.error = originalError; client.destroy(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('Board-assisted onboarding assigns roles before sending its member DM', async () => {

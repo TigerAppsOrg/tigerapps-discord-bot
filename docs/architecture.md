@@ -116,12 +116,12 @@ Board can onboard an existing Discord member with `/onboard member email`. The b
 | --- | --- | --- |
 | `/onboard` | Any member; Board with `member` and `email` | Self-service sign-in, or Board-confirmed roster linking and ordinary role assignment for another Discord member |
 | `/info` | TigerApps member, Board, or Team Lead | Private card with one Clean-roster person's name, team, role, year, GitHub, email, phone, and an available headshot |
-| `/announce` | Board club-wide or for any team; leads for mapped teams | Preview, then post to Discord and send roster email through Gmail with hidden recipients |
+| `/announce` | Board club-wide or for any team; leads for mapped teams | Preview with an optional test email to the author, then post to Discord and send roster email through Gmail with hidden recipients |
 | `/github-invite` | Board or Team Lead | Invite an exact Clean-roster member by GitHub username or Princeton email; acceptance remains pending |
 | `/resign` | Linked non-Board member | Move controllable Discord roles to Alumni, flag Status Review, notify Board; GitHub remains unchanged |
 | `/remove` | Board | Move target to Guest, flag Status Review, attempt GitHub org removal, notify Board of any partial failure |
 
-The private `#bot-log` channel records every slash-command invocation and completed onboarding, including Board-assisted links and new Guest access. It also records operation failures and partial outcomes in compact embeds. `/info` results, announcement text, and roster phone numbers are not copied into the log. Guests cannot use `/info`; anyone with the TigerApps member role can see roster contact fields, including phone numbers.
+The private `#bot-log` channel records every slash-command invocation and completed onboarding, including Board-assisted links and new Guest access. It also records operation failures, with the underlying error, and partial outcomes in compact embeds. Members see a plain explanation instead of the technical detail. `/info` results, announcement text, and roster phone numbers are not copied into the log. Guests cannot use `/info`; anyone with the TigerApps member role can see roster contact fields, including phone numbers.
 
 `/info` reads the public current-member photo feed at `https://tigerapps.org/members.json`. The Homepage builds that feed from portraits already shown on the site, including its placeholder image. The bot uses a portrait only for a unique exact roster name and class-year match; when no site portrait is available, a linked Discord account can supply its avatar. The card still works if the Homepage is unavailable.
 

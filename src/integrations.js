@@ -76,14 +76,14 @@ export function announcementRecipients(rows, team) {
     .map(row => row.email).filter(email => /^[^\s@]+@princeton\.edu$/.test(email)))].sort();
 }
 
-export function mailMessage({ subject, body, to, cc, bcc, discordUrl }) {
+export function mailMessage({ subject, body, to, cc, bcc = [], discordUrl }) {
   const address = value => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) throw new Error('Invalid email address.');
     return value;
   };
   const safeSubject = subject.replace(/[\r\n]/g, ' ').trim();
-  if (!safeSubject || !bcc.length) throw new Error('Announcement needs a subject and recipients.');
-  if (!/^https:\/\/discord\.com\/channels\/\d{17,20}\/\d{17,20}\/\d{17,20}$/.test(discordUrl)) throw new Error('Invalid Discord announcement link.');
+  if (!safeSubject) throw new Error('Announcement needs a subject.');
+  if (discordUrl && !/^https:\/\/discord\.com\/channels\/\d{17,20}\/\d{17,20}\/\d{17,20}$/.test(discordUrl)) throw new Error('Invalid Discord announcement link.');
   const subjectWords = [];
   let chunk = '', bytes = 0;
   for (const character of safeSubject) {
@@ -103,15 +103,15 @@ export function mailMessage({ subject, body, to, cc, bcc, discordUrl }) {
     <div style="color:#b45f12;font-size:12px;font-weight:bold;letter-spacing:2px">TIGERAPPS</div>
     <h1 style="margin:18px 0 20px;font-size:26px;line-height:1.25">${escape(safeSubject)}</h1>
     <div style="font-size:16px;line-height:1.65">${escape(body).replace(/\r?\n/g, '<br>')}</div>
-    <p style="margin:32px 0"><a href="${discordUrl}" style="display:inline-block;padding:12px 18px;background:#1d2633;border-radius:7px;color:#fff;text-decoration:none;font-weight:bold">Open in Discord</a></p>
+    ${discordUrl ? `<p style="margin:32px 0"><a href="${discordUrl}" style="display:inline-block;padding:12px 18px;background:#1d2633;border-radius:7px;color:#fff;text-decoration:none;font-weight:bold">Open in Discord</a></p>` : '<p style="margin:32px 0 0"></p>'}
     <p style="margin:0;font-size:12px;line-height:1.5;color:#68717b">Sent via the TigerApps Discord bot.</p>
   </td></tr></table>
 </td></tr></table></body></html>`;
-  const plain = `${body}\n\nOpen in Discord: ${discordUrl}\n\nSent via the TigerApps Discord bot.`;
+  const plain = `${body}${discordUrl ? `\n\nOpen in Discord: ${discordUrl}` : ''}\n\nSent via the TigerApps Discord bot.`;
   const headers = [
     `From: TigerApps <${sender}>`, `To: ${address(to)}`,
     ...(cc ? [`Cc: ${address(cc)}`] : []),
-    `Bcc: ${bcc.map(address).join(',\r\n ')}`,
+    ...(bcc.length ? [`Bcc: ${bcc.map(address).join(',\r\n ')}`] : []),
     `Reply-To: ${address(to)}`,
     `Subject: ${encodedSubject}`,
     'MIME-Version: 1.0', `Content-Type: multipart/alternative; boundary="${boundary}"`,
