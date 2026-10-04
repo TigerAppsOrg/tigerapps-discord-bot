@@ -1,12 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits,
-  GuildScheduledEventEntityType, GuildScheduledEventPrivacyLevel, GuildScheduledEventRecurrenceRuleFrequency,
+  GuildScheduledEventEntityType, GuildScheduledEventPrivacyLevel,
   LabelBuilder, MessageFlags, ModalBuilder, PermissionsBitField, RadioGroupBuilder, RadioGroupOptionBuilder, SlashCommandBuilder,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { managedRoleIds } from './config.js';
-import { announcementRecipients, calendarEvent, easternInstant, githubHandle, mailSender, parseWhen, semesterEnd, timeZone } from './integrations.js';
+import { announcementRecipients, calendarEvent, easternInstant, githubHandle, mailSender, parseWhen, semesterEnd } from './integrations.js';
 import { createOAuth } from './oauth.js';
 import { rosterFunctions, rosterTeams } from './roster.js';
 
@@ -80,15 +80,17 @@ export function eventSummary({ location, date, start, end, repeat }) {
     .filter(Boolean).join('\n');
 }
 
-export function discordEvent({ title, location, date, start, end, repeat }) {
-  const startAt = easternInstant(date, start);
+export function discordEvent({ title, location, date, start, end }) {
   return {
-    name: title, scheduledStartTime: startAt, scheduledEndTime: easternInstant(date, end), entityMetadata: { location },
+    name: title, scheduledStartTime: easternInstant(date, start), scheduledEndTime: easternInstant(date, end), entityMetadata: { location },
     privacyLevel: GuildScheduledEventPrivacyLevel.GuildOnly, entityType: GuildScheduledEventEntityType.External,
-    // Discord counts weekdays from Monday
-    ...(repeat ? { recurrenceRule: { startAt, frequency: GuildScheduledEventRecurrenceRuleFrequency.Weekly, interval: repeat,
-      byWeekday: [(new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7] } } : {}),
   };
+}
+
+export function nextOccurrence(date, repeat) {
+  const next = new Date(`${date}T12:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 7 * repeat);
+  return next.toISOString().slice(0, 10);
 }
 
 function eventForm(id, values = {}) {
@@ -619,12 +621,15 @@ export function createBot(config, state, roster, github, mailer, calendar) {
   }
 
   async function addEvent(action) {
+    if (easternInstant(action.date, action.start) <= new Date()) {
+      return { status: 'ready', message: 'That start time has passed. Edit the event to pick a new time.', components: [row(button(`edit:${action.id}`, 'Edit'))] };
+    }
     const created = await calendar.create(calendarEvent(action));
     let discord = 'It is also in the server events.';
     let failure = '';
     try {
       const scheduled = await guild.scheduledEvents.create(discordEvent(action));
-      if (action.repeat) state.update(data => { (data.discordSeries ??= {})[scheduled.id] = semesterEnd(action.date); });
+      if (action.repeat) state.update(data => { (data.discordSeries ??= {})[scheduled.id] = discordSeries(action); });
     }
     catch (error) { discord = 'The Discord event could not be created; Board has been notified.'; failure = ` Discord event failed: ${error.message}`; }
     await boardNotice(`<@${action.actorId}> added "${action.title}" to the TigerApps calendar.${failure}`);
@@ -670,7 +675,7 @@ export function createBot(config, state, roster, github, mailer, calendar) {
       if (action.type === 'remove') result = { status: 'done', message: await remove(action) };
       if (action.type === 'github-invite') result = { status: 'done', message: await invite(action) };
       if (action.type === 'announce') result = await announce(id, action);
-      if (action.type === 'event') result = await addEvent(action);
+      if (action.type === 'event') result = await addEvent({ ...action, id });
       state.update(data => { data.actions[id].status = result.status; });
       await interaction.editReply({ ...card(result.status === 'uncertain' ? 'Needs review' : 'Update', result.message,
         result.status === 'uncertain' ? 0xe19a35 : accent), components: result.components || [] });
@@ -734,21 +739,28 @@ export function createBot(config, state, roster, github, mailer, calendar) {
   }
 
   async function shareCalendar() {
+    const members = announcementRecipients(await roster.all(), null);
     const writers = [...new Set((await guild.members.fetch()).filter(member => isBoard(member) || isLead(member))
-      .map(member => state.linkedByDiscord(member.id)?.email).filter(email => email?.endsWith('@princeton.edu')))];
-    const readers = announcementRecipients(await roster.all(), null).filter(email => !writers.includes(email));
+      .map(member => state.linkedByDiscord(member.id)?.email).filter(email => members.includes(email)))];
+    const readers = members.filter(email => !writers.includes(email));
     const { added, changed, removed } = await calendar.share(readers, writers);
     if (added + changed + removed) await boardNotice(`Calendar sharing updated: ${added} added, ${changed} changed, ${removed} removed.`);
   }
 
-  // Discord does not let apps set a recurrence end so finished series are deleted instead
-  async function endFinishedSeries() {
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
-    for (const [id, until] of Object.entries(state.get().discordSeries || {})) {
-      if (until >= today) continue;
-      // 10070 means the event was already deleted by hand
-      await guild.scheduledEvents.delete(id).catch(error => { if (error.code !== 10070) throw error; });
-      state.update(data => { delete data.discordSeries[id]; });
+  const discordSeries = ({ title, location, date, start, end, repeat }) => ({ title, location, date, start, end, repeat, until: semesterEnd(date) });
+
+  // Discord repeats in UTC and cannot end a series so each occurrence is posted once the previous one is over
+  async function postNextOccurrences() {
+    for (const [id, series] of Object.entries(state.get().discordSeries || {})) {
+      if (easternInstant(series.date, series.end) > new Date()) continue;
+      let date = nextOccurrence(series.date, series.repeat);
+      // skips occurrences missed while the bot was offline
+      while (easternInstant(date, series.start) <= new Date()) date = nextOccurrence(date, series.repeat);
+      const next = date <= series.until ? await guild.scheduledEvents.create(discordEvent({ ...series, date })) : null;
+      state.update(data => {
+        delete data.discordSeries[id];
+        if (next) data.discordSeries[next.id] = { ...series, date };
+      });
     }
   }
 
@@ -799,7 +811,7 @@ export function createBot(config, state, roster, github, mailer, calendar) {
     try { await checkMissingRoster(); } catch { console.error('Initial roster review failed.'); }
     const calendarUpkeep = () => {
       shareCalendar().catch(error => boardNotice(`Calendar sharing failed: ${error.message}`));
-      endFinishedSeries().catch(error => boardNotice(`Ending a finished Discord event series failed: ${error.message}`));
+      postNextOccurrences().catch(error => boardNotice(`Posting the next Discord event failed: ${error.message}`));
     };
     calendarUpkeep();
     setInterval(() => { state.cleanExpired(); checkMissingRoster().catch(() => console.error('Roster review failed.')); calendarUpkeep(); }, 24 * 60 * 60_000).unref();

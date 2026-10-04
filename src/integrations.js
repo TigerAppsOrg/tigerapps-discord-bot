@@ -194,6 +194,9 @@ export function parseWhen(dateText, timeText, now = new Date()) {
   if (start < 0 || end <= start || end >= 24 * 60) throw new Error('The event needs to end after it starts, on the same day.');
   const clock = value => `${pad(Math.floor(value / 60))}:${pad(value % 60)}`;
   const when = { date, start: clock(start), end: clock(end) };
+  const wallTime = time => new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .format(easternInstant(date, time));
+  if (wallTime(when.start) !== when.start || wallTime(when.end) !== when.end) throw new Error('That time is skipped by the daylight saving change.');
   if (easternInstant(date, when.start) <= now) throw new Error('That time has already passed.');
   return when;
 }
@@ -208,7 +211,7 @@ export function calendarEvent({ title, location, date, start, end, repeat }) {
     summary: title, location,
     start: { dateTime: `${date}T${start}:00`, timeZone },
     end: { dateTime: `${date}T${end}:00`, timeZone },
-    ...(repeat ? { recurrence: [`RRULE:FREQ=WEEKLY;INTERVAL=${repeat};UNTIL=${semesterEnd(date).replaceAll('-', '')}T235959Z`] } : {}),
+    ...(repeat ? { recurrence: [`RRULE:FREQ=WEEKLY;INTERVAL=${repeat};UNTIL=${easternInstant(semesterEnd(date), '23:59').toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`] } : {}),
   };
 }
 
