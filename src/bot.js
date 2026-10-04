@@ -161,6 +161,7 @@ export function createBot(config, state, roster, github, mailer) {
   const isBoard = member => member.roles.cache.has(server.roles.board);
   const isLead = member => member.roles.cache.has(server.roles.teamLead);
   const leadsFor = member => Object.entries(server.teams).filter(([, team]) => team.leadIds.includes(member.id)).map(([name]) => name);
+  const canAnnounce = (member, team) => isBoard(member) || (isLead(member) && leadsFor(member).includes(team));
 
   const rosterChoices = person => ({
     teams: rosterTeams(person, Object.keys(server.teams)),
@@ -407,7 +408,7 @@ export function createBot(config, state, roster, github, mailer) {
     }
     await interaction.deferReply({ flags: ephemeral });
     const actor = await currentMember(interaction.user.id);
-    if (!isBoard(actor) && (!isLead(actor) || !leadsFor(actor).includes(action.team))) throw new UserError('Announcement access changed.');
+    if (!canAnnounce(actor, action.team)) throw new UserError('Announcement access changed.');
     const subject = interaction.fields.getTextInputValue('subject').trim();
     const body = interaction.fields.getTextInputValue('body').trim();
     if (!subject || !body) throw new UserError('Announcement needs a subject and message.');
@@ -435,7 +436,12 @@ export function createBot(config, state, roster, github, mailer) {
       await interaction.reply({ flags: ephemeral, ...card('Announcement expired', 'Run `/announce` again.', 0xe19a35) }); return;
     }
     await interaction.deferReply({ flags: ephemeral });
+    const actor = await currentMember(interaction.user.id);
+    if (!canAnnounce(actor, action.team)) throw new UserError('Your command access changed.');
     const rows = await roster.all();
+    if (action.team && !rows.some(row => row.email === state.linkedByDiscord(actor.id)?.email)) {
+      throw new UserError('Your Princeton roster access changed.');
+    }
     const recipients = new Set(announcementRecipients(rows, action.team));
     const people = rows.filter(row => recipients.has(row.email)).map(row => `${row.name} <${row.email}>`);
     const to = state.linkedByDiscord(interaction.user.id)?.email || mailSender;
@@ -557,7 +563,7 @@ export function createBot(config, state, roster, github, mailer) {
     const actor = await currentMember(interaction.user.id);
     if ((['remove', 'onboard-member'].includes(action.type) && !isBoard(actor)) ||
         (action.type === 'github-invite' && !isBoard(actor) && !isLead(actor)) ||
-        (action.type === 'announce' && !isBoard(actor) && (!isLead(actor) || !leadsFor(actor).includes(action.team)))) {
+        (action.type === 'announce' && !canAnnounce(actor, action.team))) {
       throw new UserError('Your command access changed.');
     }
     if (action.type === 'announce' && action.team && !(await roster.byEmail(state.linkedByDiscord(actor.id)?.email || ''))) {

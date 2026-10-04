@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, validateServerConfig } from '../src/config.js';
+import { loadConfig, managedRoleIds, validateServerConfig } from '../src/config.js';
 import { announcementPost, announcementPreview, assistedOnboardingDm, createBot, failureMessage, memberHeadshot, memberInfoCard, roleChange } from '../src/bot.js';
 import { Github, announcementRecipients, githubHandle, mailMessage } from '../src/integrations.js';
 import { verifiedPrincetonEmail } from '../src/oauth.js';
@@ -11,6 +11,29 @@ import { Roster, parseRoster, rosterFunctions, rosterTeams } from '../src/roster
 import { State } from '../src/state.js';
 
 const header = ['Name', 'Team', 'Role', 'Year', 'Phone', 'GitHub', 'Website', 'Email'];
+
+const readyServer = { guildId: 'guild', roles: { guest: 'guest', member: 'member', alumni: 'alumni', teamLead: 'lead', board: 'board' },
+  channels: { startHere: 'start', publicChat: 'public', announcements: 'announcements', boardLog: 'log' },
+  teams: { TigerOps: { roleId: 'team', channelId: 'team-channel', leadIds: ['lead'] } }, functions: {}, years: {} };
+
+// runs startup against a guild where every member is looked up in members
+async function startBot(client, state, members, guildExtra = {}) {
+  const channel = { isTextBased: () => true, permissionsFor: () => ({ has: () => true }), send: async () => ({ id: 'panel' }) };
+  const role = { comparePositionTo: () => 1 };
+  const guild = { id: readyServer.guildId, ownerId: 'owner', commands: { set: async () => {} },
+    roles: { cache: new Map([readyServer.roles.board, ...managedRoleIds(readyServer)].map(id => [id, role])), fetch: async () => {} },
+    channels: { cache: new Map([...Object.values(readyServer.channels), 'team-channel'].map(id => [id, channel])), fetch: async () => {} },
+    members: { fetchMe: async () => ({ permissions: { has: () => true }, roles: { highest: role } }),
+      fetch: async options => options?.user ? members[options.user] : new Map(Object.entries(members)) },
+    ...guildExtra };
+  client.guilds.fetch = async () => guild;
+  client.channels.fetch = async () => channel;
+  client.emit('clientReady');
+  for (let i = 0; i < 40 && !state.get().panelId; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  return guild;
+}
+
+const member = (id, ...roles) => ({ id, roles: { cache: new Map(roles.map(role => [role, {}])) } });
 
 test('Clean roster requires its exact schema and unique email identities', () => {
   const rows = parseRoster([header, ['A', 'TigerOps, The Forum', 'SWE, Designer', '2028', '', 'a', '', 'A@princeton.edu']]);
@@ -318,22 +341,29 @@ test('announcement test sends reach only the sender and list the real recipients
   const state = new State(join(dir, 'state.json'));
   const rows = [{ name: 'Member A', email: 'a@princeton.edu', team: 'TigerOps' }, { name: 'Member B', email: 'b@princeton.edu', team: 'The Forum' }];
   const sent = [];
-  const { client } = createBot({ baseUrl: 'http://localhost:3000', server: { guildId: 'guild', roles: {}, channels: {}, teams: {} } }, state,
-    { all: async () => rows }, {}, { send: async message => { sent.push(message); } });
-  client.channels.fetch = async () => ({ send: async () => {} });
+  const { client } = createBot({ baseUrl: 'http://localhost:3000', server: readyServer }, state,
+    { all: async () => [...rows, { name: 'Lead', email: 'lead@princeton.edu', team: 'TigerOps' }] }, {}, { send: async message => { sent.push(message); } });
+  const members = { lead: member('lead', 'lead') };
   state.link('google-lead', 'lead@princeton.edu', 'lead');
   state.update(data => { data.actions.ann = { type: 'announce', actorId: 'lead', team: 'TigerOps', subject: 'Meeting', body: 'Hello',
     status: 'ready', expiresAt: Date.now() + 60_000 }; });
   const emit = () => new Promise(resolve => client.emit('interactionCreate', { guildId: 'guild', user: { id: 'lead' }, customId: 'test:ann',
     isChatInputCommand: () => false, isModalSubmit: () => false, isStringSelectMenu: () => false, isButton: () => true,
     deferReply: async () => {}, deferred: true, editReply: resolve, followUp: resolve, reply: resolve }));
+  const originalError = console.error;
   try {
+    await startBot(client, state, members);
     const reply = await emit();
     assert.equal(reply.embeds[0].toJSON().title, 'Test sent');
     assert.deepEqual({ to: sent[0].to, subject: sent[0].subject, bcc: sent[0].bcc, cc: sent[0].cc }, { to: 'lead@princeton.edu', subject: '[Test] Meeting', bcc: undefined, cc: undefined });
-    assert.match(sent[0].body, /Real recipients \(1\):\nMember A <a@princeton\.edu>$/);
+    assert.match(sent[0].body, /Real recipients \(2\):\nMember A <a@princeton\.edu>\nLead <lead@princeton\.edu>$/);
     assert.equal(state.get().actions.ann.status, 'ready');
-  } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
+    console.error = () => {};
+    members.lead = member('lead');
+    const denied = await emit();
+    assert.equal(denied.embeds[0].toJSON().description, 'Your command access changed.');
+    assert.equal(sent.length, 1);
+  } finally { console.error = originalError; client.destroy(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('unexpected failures explain themselves and report details to Board', async () => {
