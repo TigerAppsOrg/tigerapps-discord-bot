@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { Collection } from 'discord.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, managedRoleIds, validateServerConfig } from '../src/config.js';
-import { announcementPost, announcementPreview, assistedOnboardingDm, createBot, failureMessage, memberHeadshot, memberInfoCard, roleChange } from '../src/bot.js';
-import { Github, announcementRecipients, githubHandle, mailMessage } from '../src/integrations.js';
+import { announcementPost, announcementPreview, assistedOnboardingDm, createBot, discordEvent, eventSummary, failureMessage, nextOccurrence, memberHeadshot, memberInfoCard, roleChange } from '../src/bot.js';
+import { Calendar, Github, announcementRecipients, calendarEvent, easternInstant, githubHandle, mailMessage, parseWhen } from '../src/integrations.js';
 import { verifiedPrincetonEmail } from '../src/oauth.js';
 import { Roster, parseRoster, rosterFunctions, rosterTeams } from '../src/roster.js';
 import { State } from '../src/state.js';
@@ -24,7 +25,7 @@ async function startBot(client, state, members, guildExtra = {}) {
     roles: { cache: new Map([readyServer.roles.board, ...managedRoleIds(readyServer)].map(id => [id, role])), fetch: async () => {} },
     channels: { cache: new Map([...Object.values(readyServer.channels), 'team-channel'].map(id => [id, channel])), fetch: async () => {} },
     members: { fetchMe: async () => ({ permissions: { has: () => true }, roles: { highest: role } }),
-      fetch: async options => options?.user ? members[options.user] : new Map(Object.entries(members)) },
+      fetch: async options => options?.user ? members[options.user] : new Collection(Object.entries(members)) },
     ...guildExtra };
   client.guilds.fetch = async () => guild;
   client.channels.fetch = async () => channel;
@@ -228,7 +229,7 @@ test('server reads file-backed credentials from private paths', () => {
     .map((key, i) => [key, join(dir, `${i}.txt`)]));
   const env = { ...files, DISCORD_TOKEN: 'bot', DISCORD_APP_ID: 'app', DISCORD_CLIENT_SECRET: 'discord',
     PUBLIC_BASE_URL: 'https://api.tigerapps.org', GOOGLE_CLIENT_ID: 'google', GOOGLE_CLIENT_SECRET: 'google-secret',
-    GMAIL_CLIENT_ID: 'gmail', GMAIL_CLIENT_SECRET: 'gmail-secret', ROSTER_SPREADSHEET_ID: 'sheet',
+    GMAIL_CLIENT_ID: 'gmail', GMAIL_CLIENT_SECRET: 'gmail-secret', ROSTER_SPREADSHEET_ID: 'sheet', GOOGLE_CALENDAR_ID: 'calendar',
     GITHUB_APP_ID: 'github', GITHUB_INSTALLATION_ID: 'installation' };
   const original = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   writeFileSync(files.SERVER_CONFIG_FILE, JSON.stringify(server));
@@ -242,6 +243,7 @@ test('server reads file-backed credentials from private paths', () => {
     assert.equal(config.googleServiceAccount.client_email, 'bot@example.com');
     assert.equal(config.githubPrivateKey, 'private key');
     assert.equal(config.gmailRefreshToken, 'refresh token');
+    assert.equal(config.calendarId, 'calendar');
   } finally {
     for (const [key, value] of Object.entries(original)) value === undefined ? delete process.env[key] : process.env[key] = value;
     rmSync(dir, { recursive: true, force: true });
@@ -387,6 +389,133 @@ test('unexpected failures explain themselves and report details to Board', async
     await new Promise(resolve => setImmediate(resolve));
     assert.ok(logs.some(message => message.includes('/github-invite failed for <@user>: Roster request failed (400): Unable to parse range')));
   } finally { console.error = originalError; client.destroy(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('event times read naturally in Eastern time', () => {
+  const now = new Date('2026-10-03T16:00:00Z');
+  const oct8 = { date: '2026-10-08', start: '18:45', end: '19:15' };
+  for (const date of ['Thu Oct 8', 'October 8th', '10/8', '10/8/26', '2026-10-08']) assert.deepEqual(parseWhen(date, '6:45-7:15pm', now), oct8);
+  assert.deepEqual(parseWhen('Oct 8', '6:45pm to 7:15pm', now), oct8);
+  assert.deepEqual(parseWhen('Oct 8', '18:45-19:15', now), oct8);
+  assert.deepEqual(parseWhen('Oct 8', '7pm', now), { date: '2026-10-08', start: '19:00', end: '20:00' });
+  assert.deepEqual(parseWhen('Oct 8', '11-1pm', now), { date: '2026-10-08', start: '11:00', end: '13:00' });
+  assert.equal(parseWhen('Jan 15', '4pm', now).date, '2027-01-15');
+  assert.throws(() => parseWhen('Octember 8', '4pm', now), /date like/);
+  assert.throws(() => parseWhen('2/30', '4pm', now), /does not exist/);
+  assert.throws(() => parseWhen('Oct 8', '6:45-7:15', now), /am or pm/);
+  assert.throws(() => parseWhen('Oct 8', '7pm-6pm', now), /end after it starts/);
+  assert.throws(() => parseWhen('Oct 8', '11-1am', now), /end after it starts/);
+  assert.throws(() => parseWhen('2027-03-14', '2:30-3:30am', now), /daylight saving/);
+  assert.equal(easternInstant('2026-03-08', '03:30').toISOString(), '2026-03-08T07:30:00.000Z');
+  assert.equal(easternInstant('2026-03-08', '01:30').toISOString(), '2026-03-08T06:30:00.000Z');
+  assert.equal(easternInstant('2026-11-01', '03:30').toISOString(), '2026-11-01T08:30:00.000Z');
+  assert.throws(() => parseWhen('Oct 3', '9am', now), /already passed/);
+});
+
+test('repeating events end with the semester on Google and Discord', () => {
+  const event = { title: 'Office hours', location: 'Lewis 122', date: '2026-10-08', start: '18:45', end: '19:15', repeat: 2 };
+  assert.deepEqual(calendarEvent(event), {
+    summary: 'Office hours', location: 'Lewis 122',
+    start: { dateTime: '2026-10-08T18:45:00', timeZone: 'America/New_York' },
+    end: { dateTime: '2026-10-08T19:15:00', timeZone: 'America/New_York' },
+    recurrence: ['RRULE:FREQ=WEEKLY;INTERVAL=2;UNTIL=20261221T045900Z'],
+  });
+  assert.match(calendarEvent({ ...event, date: '2027-02-04' }).recurrence[0], /UNTIL=20270601T035900Z/);
+  assert.equal(calendarEvent({ ...event, repeat: 0 }).recurrence, undefined);
+  const discord = discordEvent(event);
+  assert.equal(discord.scheduledStartTime.toISOString(), '2026-10-08T22:45:00.000Z');
+  assert.equal(discord.scheduledEndTime.toISOString(), '2026-10-08T23:15:00.000Z');
+  assert.equal(nextOccurrence('2026-10-29', 1), '2026-11-05');
+  assert.equal(nextOccurrence('2026-12-31', 2), '2027-01-14');
+  assert.equal(discordEvent({ ...event, date: '2026-10-29', start: '18:00' }).scheduledStartTime.toISOString(), '2026-10-29T22:00:00.000Z');
+  assert.equal(discordEvent({ ...event, date: '2026-11-05', start: '18:00' }).scheduledStartTime.toISOString(), '2026-11-05T23:00:00.000Z');
+  assert.match(eventSummary(event), /<t:\d+:F> – <t:\d+:t>\nEvery 2 weeks until Dec 20\nLewis 122/);
+});
+
+test('calendar sharing follows the roster and leaves other sharing alone', async () => {
+  const calendar = new Calendar({ calendarId: 'club@group.calendar.google.com', gmailClientId: 'id', gmailClientSecret: 'secret', gmailRefreshToken: 'refresh' });
+  calendar.auth.getAccessToken = async () => ({ token: 'token' });
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push([options.method || 'GET', url.split('/calendars/')[1], options.body && JSON.parse(options.body)]);
+    return { ok: true, status: options.method === 'DELETE' ? 204 : 200, json: async () => ({ items: [
+      { id: 'user:owner@tigerapps.org', role: 'owner', scope: { type: 'user', value: 'owner@tigerapps.org' } },
+      { id: 'user:keep@princeton.edu', role: 'reader', scope: { type: 'user', value: 'keep@princeton.edu' } },
+      { id: 'user:lead@princeton.edu', role: 'reader', scope: { type: 'user', value: 'lead@princeton.edu' } },
+      { id: 'user:gone@princeton.edu', role: 'reader', scope: { type: 'user', value: 'gone@princeton.edu' } },
+    ] }) };
+  };
+  try {
+    const changes = await calendar.share(['keep@princeton.edu', 'new@princeton.edu'], ['lead@princeton.edu']);
+    assert.deepEqual(changes, { added: 1, changed: 1, removed: 1 });
+    assert.deepEqual(calls.slice(1), [
+      ['DELETE', 'club%40group.calendar.google.com/acl/user%3Agone%40princeton.edu', undefined],
+      ['POST', 'club%40group.calendar.google.com/acl?sendNotifications=true', { role: 'reader', scope: { type: 'user', value: 'new@princeton.edu' } }],
+      ['PUT', 'club%40group.calendar.google.com/acl/user%3Alead%40princeton.edu', { role: 'writer', scope: { type: 'user', value: 'lead@princeton.edu' } }],
+    ]);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('event command previews, corrects, and adds the event', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tigerapps-event-'));
+  const state = new State(join(dir, 'state.json'));
+  const created = [];
+  const shared = [];
+  const calendar = { create: async event => { created.push(event); return { htmlLink: 'https://www.google.com/calendar/event?eid=abc' }; },
+    share: async (readers, writers) => { shared.push([readers, writers]); return { added: 0, changed: 0, removed: 0 }; } };
+  const { client } = createBot({ baseUrl: 'http://localhost:3000', server: readyServer }, state, { all: async () => [] }, {}, {}, calendar);
+  const scheduled = [];
+  const past = { title: 'Standup', location: 'Lewis 122', start: '18:00', end: '19:00', repeat: 1 };
+  state.link('google-lead', 'lead@princeton.edu', 'lead');
+  state.update(data => { data.discordSeries = {
+    continues: { ...past, date: '2020-01-02', until: '2999-05-31' }, ends: { ...past, date: '2020-05-28', until: '2020-05-31' },
+    upcoming: { ...past, date: '2999-01-07', until: '2999-05-31' } }; });
+  const base = { guildId: 'guild', user: { id: 'lead' }, isChatInputCommand: () => false, isModalSubmit: () => false,
+    isStringSelectMenu: () => false, isButton: () => false };
+  const emit = interaction => new Promise(resolve => client.emit('interactionCreate', { ...base, reply: resolve, update: resolve, showModal: resolve,
+    editReply: resolve, deferUpdate: async () => {}, ...interaction }));
+  const submit = (id, values) => emit({ isModalSubmit: () => true, customId: `event:${id}`, isFromMessage: () => false,
+    fields: { getTextInputValue: name => values[name], getRadioGroup: () => values.repeat } });
+  try {
+    const modal = await emit({ isChatInputCommand: () => true, commandName: 'event', inCachedGuild: () => true,
+      member: { id: 'lead', roles: { cache: new Set(['lead']) } } });
+    const form = modal.toJSON();
+    assert.equal(form.title, 'New event');
+    assert.deepEqual(form.components.map(component => component.label), ['Title', 'Date', 'Time', 'Location', 'Repeats']);
+    const id = form.custom_id.slice('event:'.length);
+    const values = { title: 'Office hours', date: 'Octember 8', time: '6:45-7:15pm', location: 'Lewis 122', repeat: '1' };
+    const problem = await submit(id, values);
+    assert.match(problem.embeds[0].toJSON().description, /date like/);
+    const retry = await emit({ isButton: () => true, customId: problem.components[0].components[0].toJSON().custom_id });
+    assert.equal(retry.toJSON().components[1].component.value, 'Octember 8');
+    const preview = await submit(id, { ...values, date: 'Dec 10' });
+    assert.equal(preview.embeds[0].toJSON().title, 'Office hours');
+    assert.match(preview.embeds[0].toJSON().description, /Weekly until Dec 20/);
+    await startBot(client, state, { lead: member('lead', 'lead') }, { scheduledEvents: {
+      create: async event => { scheduled.push(event); return { id: `event-${scheduled.length}` }; } } });
+    for (let i = 0; i < 40 && (!shared.length || !scheduled.length); i++) await new Promise(resolve => setTimeout(resolve, 5));
+    // a lead who is no longer on the roster gets no calendar access
+    assert.deepEqual(shared, [[[], []]]);
+    assert.equal(scheduled.length, 1);
+    assert.ok(scheduled[0].scheduledStartTime > Date.now() && scheduled[0].scheduledStartTime - Date.now() <= 7 * 24 * 60 * 60_000);
+    assert.equal(scheduled[0].scheduledStartTime.getUTCDay(), 4);
+    state.update(data => { data.actions.late = { type: 'event', actorId: 'lead', status: 'ready', expiresAt: Date.now() + 60_000,
+      title: 'Late', location: 'Lewis 122', date: '2020-01-01', start: '12:00', end: '13:00', repeat: 0 }; });
+    const late = await emit({ isButton: () => true, customId: 'confirm:late' });
+    assert.match(late.embeds[0].toJSON().description, /start time has passed/);
+    assert.equal(late.components[0].components[0].toJSON().custom_id, 'edit:late');
+    assert.equal(created.length, 0);
+    assert.equal(state.get().actions.late.status, 'ready');
+    const done = await emit({ isButton: () => true, customId: `confirm:${id}` });
+    assert.match(done.embeds[0].toJSON().description, /Added to the TigerApps calendar\. It is also in the server events\./);
+    assert.equal(done.components[0].components[0].toJSON().url, 'https://www.google.com/calendar/event?eid=abc');
+    assert.equal(created[0].summary, 'Office hours');
+    assert.equal(scheduled[1].name, 'Office hours');
+    assert.deepEqual(Object.keys(state.get().discordSeries).sort(), ['event-1', 'event-2', 'upcoming']);
+    assert.equal(state.get().discordSeries['event-1'].until, '2999-05-31');
+    assert.equal(state.get().discordSeries['event-2'].until, '2026-12-20');
+  } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('Board-assisted onboarding assigns roles before sending its member DM', async () => {
