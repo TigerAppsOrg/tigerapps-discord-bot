@@ -5,7 +5,7 @@ const headers = ['Name', 'Team', 'Role', 'Year', 'Phone', 'GitHub', 'Website', '
 
 export function parseRoster(values) {
   if (!values?.length || headers.some((header, i) => values[0][i] !== header)) {
-    throw new Error('Clean roster columns have changed; access decisions are paused.');
+    throw new Error('Roster columns have changed; access decisions are paused.');
   }
   const rows = values.slice(1).map((cells, i) => ({
     row: i + 2, name: cells[0]?.trim() || '', team: cells[1]?.trim() || '',
@@ -14,7 +14,7 @@ export function parseRoster(values) {
     website: cells[6]?.trim() || '', email: cells[7]?.trim().toLowerCase() || '',
   })).filter(row => row.email);
   if (new Set(rows.map(row => row.email)).size !== rows.length) {
-    throw new Error('Clean roster contains duplicate email addresses; access decisions are paused.');
+    throw new Error('Roster contains duplicate email addresses; access decisions are paused.');
   }
   return rows;
 }
@@ -49,7 +49,10 @@ export class Roster {
       ...options,
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     });
-    if (!response.ok) throw new Error(`Roster request failed (${response.status})`);
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => null))?.error?.message;
+      throw new Error(`Roster request failed (${response.status})${detail ? `: ${detail}` : ''}`);
+    }
     return response.json();
   }
 

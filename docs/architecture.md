@@ -17,6 +17,7 @@ The bot runs as one Node.js service on the `TigerApps-Combined` EC2 instance. Cl
 | Clean roster workbook | Google Sheets | Member allowlist and `Status Review` flag |
 | Google OAuth clients | Google Auth Platform | Princeton member sign-in and TigerApps mailbox authorization |
 | TigerApps mailbox | Gmail | `/announce` email delivery |
+| TigerApps calendar | Google Calendar | `/event` events and roster-based calendar sharing |
 | GitHub App | TigerAppsOrg | Organization invitations and removals |
 
 ## Component view
@@ -116,12 +117,13 @@ Board can onboard an existing Discord member with `/onboard member email`. The b
 | --- | --- | --- |
 | `/onboard` | Any member; Board with `member` and `email` | Self-service sign-in, or Board-confirmed roster linking and ordinary role assignment for another Discord member |
 | `/info` | TigerApps member, Board, or Team Lead | Private card with one Clean-roster person's name, team, role, year, GitHub, email, phone, and an available headshot |
-| `/announce` | Board club-wide or for any team; leads for mapped teams | Preview, then post to Discord and send roster email through Gmail with hidden recipients |
+| `/announce` | Board club-wide or for any team; leads for mapped teams | Preview with an optional test email to the author, then post to Discord and send roster email through Gmail with hidden recipients |
+| `/event` | Board or Team Lead | Preview, then add a one-time, weekly, or every-other-week event to the TigerApps calendar and the server's Discord events; repeats end at the semester's close |
 | `/github-invite` | Board or Team Lead | Invite an exact Clean-roster member by GitHub username or Princeton email; acceptance remains pending |
 | `/resign` | Linked non-Board member | Move controllable Discord roles to Alumni, flag Status Review, notify Board; GitHub remains unchanged |
 | `/remove` | Board | Move target to Guest, flag Status Review, attempt GitHub org removal, notify Board of any partial failure |
 
-The private `#bot-log` channel records every slash-command invocation and completed onboarding, including Board-assisted links and new Guest access. It also records operation failures and partial outcomes in compact embeds. `/info` results, announcement text, and roster phone numbers are not copied into the log. Guests cannot use `/info`; anyone with the TigerApps member role can see roster contact fields, including phone numbers.
+The private `#bot-log` channel records every slash-command invocation and completed onboarding, including Board-assisted links and new Guest access. It also records operation failures, with the underlying error, and partial outcomes in compact embeds. Members see a plain explanation instead of the technical detail. `/info` results, announcement text, and roster phone numbers are not copied into the log. Guests cannot use `/info`; anyone with the TigerApps member role can see roster contact fields, including phone numbers.
 
 `/info` reads the public current-member photo feed at `https://tigerapps.org/members.json`. The Homepage builds that feed from portraits already shown on the site, including its placeholder image. The bot uses a portrait only for a unique exact roster name and class-year match; when no site portrait is available, a linked Discord account can supply its avatar. The card still works if the Homepage is unavailable.
 
@@ -150,9 +152,9 @@ sequenceDiagram
 
 `server.json` maps existing Discord IDs. It does not create channels or edit channel permissions. It contains the guild ID; Guest, TigerApps member, Alumni, Team Lead, and Board role IDs; onboarding, public chat, announcements, and private Board log channel IDs; team role/channel/lead mappings; ordinary function and class-year roles; and optional additional roles to revoke on resignation or removal. Team names in this map should match the Clean roster values used for preselection. Renaming a Discord role or channel preserves its ID; recreating it requires a map update.
 
-The bot needs **Server Members Intent** and Discord permissions **Manage Roles, View Channels, Send Messages, Read Message History, Embed Links**. Its highest role must be below Board and above every role it manages, including Team Lead. It must be able to send embeds in the onboarding, announcements, Board log, and mapped team channels. The announcement roles must be mentionable for the intended ping to work. It does not need Administrator, Manage Channels, Message Content Intent, or Presence Intent. Discord channel overrides must still be reviewed separately: a server-level permission alone does not guarantee access to a private channel.
+The bot needs **Server Members Intent** and Discord permissions **Manage Roles, View Channels, Send Messages, Read Message History, Embed Links, Create Events**. Its highest role must be below Board and above every role it manages, including Team Lead. It must be able to send embeds in the onboarding, announcements, Board log, and mapped team channels. The announcement roles must be mentionable for the intended ping to work. It does not need Administrator, Manage Channels, Message Content Intent, or Presence Intent. Discord channel overrides must still be reviewed separately: a server-level permission alone does not guarantee access to a private channel.
 
-The roster service account receives Editor sharing on the specific workbook so it can read Clean roster columns and check `Status Review`. The member OAuth client requests only `openid email`; the separate mailbox client requests `gmail.send`. The GitHub App needs organization **Members: read and write**, with no repository permissions beyond GitHub's implicit metadata access. A GitHub organization invitation does not become active until accepted. The current organization base repository permission is write.
+The roster service account receives Editor sharing on the specific workbook so it can read Clean roster columns and check `Status Review`. The member OAuth client requests only `openid email`; the separate mailbox client requests `gmail.send` and `calendar`. Once a day, and at startup, the bot shares the TigerApps calendar with every roster email as a viewer and with linked Board members and Team Leads who are on the roster as editors. It removes Princeton addresses that are no longer on the roster and leaves other sharing untouched. Discord repeats events in UTC and does not let apps end a series, so for repeating events the bot posts each next Discord occurrence after the previous one ends, through the semester's close. The GitHub App needs organization **Members: read and write**, with no repository permissions beyond GitHub's implicit metadata access. A GitHub organization invitation does not become active until accepted. The current organization base repository permission is write.
 
 ## Persistence and recovery
 

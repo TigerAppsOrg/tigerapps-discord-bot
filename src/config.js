@@ -49,7 +49,7 @@ export function loadConfig() {
   const required = [
     'DISCORD_TOKEN', 'DISCORD_APP_ID', 'DISCORD_CLIENT_SECRET', 'PUBLIC_BASE_URL',
     'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET',
-    'ROSTER_SPREADSHEET_ID', 'GITHUB_APP_ID',
+    'ROSTER_SPREADSHEET_ID', 'GOOGLE_CALENDAR_ID', 'GITHUB_APP_ID',
     'GITHUB_INSTALLATION_ID',
   ];
   for (const key of required) if (!process.env[key]) throw new Error(`Missing ${key}`);
@@ -81,6 +81,7 @@ export function loadConfig() {
     gmailClientSecret: process.env.GMAIL_CLIENT_SECRET,
     googleServiceAccount,
     rosterSpreadsheetId: process.env.ROSTER_SPREADSHEET_ID,
+    calendarId: process.env.GOOGLE_CALENDAR_ID,
     gmailRefreshToken,
     githubAppId: process.env.GITHUB_APP_ID,
     githubInstallationId: process.env.GITHUB_INSTALLATION_ID,
