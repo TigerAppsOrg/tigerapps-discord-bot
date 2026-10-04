@@ -751,12 +751,20 @@ export function createBot(config, state, roster, github, mailer, calendar) {
 
   // Discord repeats in UTC and cannot end a series so each occurrence is posted once the previous one is over
   async function postNextOccurrences() {
+    let existing;
     for (const [id, series] of Object.entries(state.get().discordSeries || {})) {
       if (easternInstant(series.date, series.end) > new Date()) continue;
       let date = nextOccurrence(series.date, series.repeat);
       // skips occurrences missed while the bot was offline
       while (easternInstant(date, series.start) <= new Date()) date = nextOccurrence(date, series.repeat);
-      const next = date <= series.until ? await guild.scheduledEvents.create(discordEvent({ ...series, date })) : null;
+      let next = null;
+      if (date <= series.until) {
+        const event = discordEvent({ ...series, date });
+        // reuses an occurrence whose creation succeeded before its state was saved
+        existing ??= await guild.scheduledEvents.fetch();
+        next = existing.find(found => found.name === event.name && found.scheduledStartTimestamp === event.scheduledStartTime.getTime()) ||
+          await guild.scheduledEvents.create(event);
+      }
       state.update(data => {
         delete data.discordSeries[id];
         if (next) data.discordSeries[next.id] = { ...series, date };

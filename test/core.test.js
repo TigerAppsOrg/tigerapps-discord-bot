@@ -470,7 +470,11 @@ test('event command previews, corrects, and adds the event', async () => {
   state.link('google-lead', 'lead@princeton.edu', 'lead');
   state.update(data => { data.discordSeries = {
     continues: { ...past, date: '2020-01-02', until: '2999-05-31' }, ends: { ...past, date: '2020-05-28', until: '2020-05-31' },
-    upcoming: { ...past, date: '2999-01-07', until: '2999-05-31' } }; });
+    upcoming: { ...past, date: '2999-01-07', until: '2999-05-31' }, lost: { ...past, title: 'Retro', date: '2020-01-02', until: '2999-05-31' } }; });
+  // the next Retro was created before a lost response so it already exists in Discord
+  let retro = nextOccurrence('2020-01-02', 1);
+  while (discordEvent({ ...past, date: retro }).scheduledStartTime <= Date.now()) retro = nextOccurrence(retro, 1);
+  const alreadyPosted = { id: 'already', name: 'Retro', scheduledStartTimestamp: discordEvent({ ...past, date: retro }).scheduledStartTime.getTime() };
   const base = { guildId: 'guild', user: { id: 'lead' }, isChatInputCommand: () => false, isModalSubmit: () => false,
     isStringSelectMenu: () => false, isButton: () => false };
   const emit = interaction => new Promise(resolve => client.emit('interactionCreate', { ...base, reply: resolve, update: resolve, showModal: resolve,
@@ -489,11 +493,12 @@ test('event command previews, corrects, and adds the event', async () => {
     assert.match(problem.embeds[0].toJSON().description, /date like/);
     const retry = await emit({ isButton: () => true, customId: problem.components[0].components[0].toJSON().custom_id });
     assert.equal(retry.toJSON().components[1].component.value, 'Octember 8');
-    const preview = await submit(id, { ...values, date: 'Dec 10' });
+    const preview = await submit(id, { ...values, date: '2999-12-10' });
     assert.equal(preview.embeds[0].toJSON().title, 'Office hours');
     assert.match(preview.embeds[0].toJSON().description, /Weekly until Dec 20/);
     await startBot(client, state, { lead: member('lead', 'lead') }, { scheduledEvents: {
-      create: async event => { scheduled.push(event); return { id: `event-${scheduled.length}` }; } } });
+      create: async event => { scheduled.push(event); return { id: `event-${scheduled.length}` }; },
+      fetch: async () => new Collection([['already', alreadyPosted]]) } });
     for (let i = 0; i < 40 && (!shared.length || !scheduled.length); i++) await new Promise(resolve => setTimeout(resolve, 5));
     // a lead who is no longer on the roster gets no calendar access
     assert.deepEqual(shared, [[[], []]]);
@@ -512,9 +517,10 @@ test('event command previews, corrects, and adds the event', async () => {
     assert.equal(done.components[0].components[0].toJSON().url, 'https://www.google.com/calendar/event?eid=abc');
     assert.equal(created[0].summary, 'Office hours');
     assert.equal(scheduled[1].name, 'Office hours');
-    assert.deepEqual(Object.keys(state.get().discordSeries).sort(), ['event-1', 'event-2', 'upcoming']);
+    assert.deepEqual(Object.keys(state.get().discordSeries).sort(), ['already', 'event-1', 'event-2', 'upcoming']);
+    assert.equal(state.get().discordSeries.already.date, retro);
     assert.equal(state.get().discordSeries['event-1'].until, '2999-05-31');
-    assert.equal(state.get().discordSeries['event-2'].until, '2026-12-20');
+    assert.equal(state.get().discordSeries['event-2'].until, '2999-12-20');
   } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
 });
 
