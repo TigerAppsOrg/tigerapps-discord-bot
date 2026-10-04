@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, managedRoleIds, validateServerConfig } from '../src/config.js';
 import { announcementPost, announcementPreview, assistedOnboardingDm, createBot, discordEvent, eventSummary, failureMessage, memberHeadshot, memberInfoCard, roleChange } from '../src/bot.js';
-import { Calendar, Github, announcementRecipients, calendarEvent, githubHandle, mailMessage, parseWhen } from '../src/integrations.js';
+import { Calendar, Github, announcementRecipients, calendarEvent, easternInstant, githubHandle, mailMessage, parseWhen } from '../src/integrations.js';
 import { verifiedPrincetonEmail } from '../src/oauth.js';
 import { Roster, parseRoster, rosterFunctions, rosterTeams } from '../src/roster.js';
 import { State } from '../src/state.js';
@@ -403,6 +403,10 @@ test('event times read naturally in Eastern time', () => {
   assert.throws(() => parseWhen('2/30', '4pm', now), /does not exist/);
   assert.throws(() => parseWhen('Oct 8', '6:45-7:15', now), /am or pm/);
   assert.throws(() => parseWhen('Oct 8', '7pm-6pm', now), /end after it starts/);
+  assert.throws(() => parseWhen('Oct 8', '11-1am', now), /end after it starts/);
+  assert.equal(easternInstant('2026-03-08', '03:30').toISOString(), '2026-03-08T07:30:00.000Z');
+  assert.equal(easternInstant('2026-03-08', '01:30').toISOString(), '2026-03-08T06:30:00.000Z');
+  assert.equal(easternInstant('2026-11-01', '03:30').toISOString(), '2026-11-01T08:30:00.000Z');
   assert.throws(() => parseWhen('Oct 3', '9am', now), /already passed/);
 });
 
@@ -454,19 +458,10 @@ test('event command previews, corrects, and adds the event', async () => {
   const state = new State(join(dir, 'state.json'));
   const created = [];
   const calendar = { create: async event => { created.push(event); return { htmlLink: 'https://www.google.com/calendar/event?eid=abc' }; } };
-  const server = { guildId: 'guild', roles: { guest: 'guest', member: 'member', alumni: 'alumni', teamLead: 'lead', board: 'board' },
-    channels: { startHere: 'start', publicChat: 'public', announcements: 'announcements', boardLog: 'log' }, teams: {}, functions: {}, years: {} };
-  const { client } = createBot({ baseUrl: 'http://localhost:3000', server }, state, { all: async () => [] }, {}, {}, calendar);
+  const { client } = createBot({ baseUrl: 'http://localhost:3000', server: readyServer }, state, { all: async () => [] }, {}, {}, calendar);
   const scheduled = [];
-  const channel = { isTextBased: () => true, permissionsFor: () => ({ has: () => true }), send: async () => ({ id: 'panel' }) };
-  const role = { comparePositionTo: () => 1 };
-  const lead = { id: 'lead', roles: { cache: new Map([['lead', {}]]) } };
-  const guild = { id: 'guild', ownerId: 'owner', roles: { cache: new Map(['board', 'guest', 'member', 'alumni', 'lead'].map(id => [id, role])), fetch: async () => {} },
-    channels: { cache: new Map(Object.values(server.channels).map(id => [id, channel])), fetch: async () => {} },
-    commands: { set: async () => {} }, scheduledEvents: { create: async event => { scheduled.push(event); } },
-    members: { fetchMe: async () => ({ permissions: { has: () => true }, roles: { highest: role } }), fetch: async () => lead } };
-  client.guilds.fetch = async () => guild;
-  client.channels.fetch = async () => ({ send: async () => {} });
+  const deleted = [];
+  state.update(data => { data.discordSeries = { finished: '2020-12-20', current: '2999-12-20' }; });
   const base = { guildId: 'guild', user: { id: 'lead' }, isChatInputCommand: () => false, isModalSubmit: () => false,
     isStringSelectMenu: () => false, isButton: () => false };
   const emit = interaction => new Promise(resolve => client.emit('interactionCreate', { ...base, reply: resolve, update: resolve, showModal: resolve,
@@ -488,13 +483,15 @@ test('event command previews, corrects, and adds the event', async () => {
     const preview = await submit(id, { ...values, date: 'Dec 10' });
     assert.equal(preview.embeds[0].toJSON().title, 'Office hours');
     assert.match(preview.embeds[0].toJSON().description, /Weekly until Dec 20/);
-    client.emit('clientReady');
-    for (let i = 0; i < 20 && !state.get().panelId; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    await startBot(client, state, { lead: member('lead', 'lead') }, { scheduledEvents: {
+      create: async event => { scheduled.push(event); return { id: 'series' }; }, delete: async id => { deleted.push(id); } } });
     const done = await emit({ isButton: () => true, customId: `confirm:${id}` });
     assert.match(done.embeds[0].toJSON().description, /Added to the TigerApps calendar\. It is also in the server events\./);
     assert.equal(done.components[0].components[0].toJSON().url, 'https://www.google.com/calendar/event?eid=abc');
     assert.equal(created[0].summary, 'Office hours');
     assert.equal(scheduled[0].name, 'Office hours');
+    assert.deepEqual(deleted, ['finished']);
+    assert.deepEqual(state.get().discordSeries, { current: '2999-12-20', series: '2026-12-20' });
   } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
 });
 

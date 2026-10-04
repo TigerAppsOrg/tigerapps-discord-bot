@@ -6,7 +6,7 @@ import {
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { managedRoleIds } from './config.js';
-import { announcementRecipients, calendarEvent, easternInstant, githubHandle, mailSender, parseWhen, semesterEnd } from './integrations.js';
+import { announcementRecipients, calendarEvent, easternInstant, githubHandle, mailSender, parseWhen, semesterEnd, timeZone } from './integrations.js';
 import { createOAuth } from './oauth.js';
 import { rosterFunctions, rosterTeams } from './roster.js';
 
@@ -622,7 +622,10 @@ export function createBot(config, state, roster, github, mailer, calendar) {
     const created = await calendar.create(calendarEvent(action));
     let discord = 'It is also in the server events.';
     let failure = '';
-    try { await guild.scheduledEvents.create(discordEvent(action)); }
+    try {
+      const scheduled = await guild.scheduledEvents.create(discordEvent(action));
+      if (action.repeat) state.update(data => { (data.discordSeries ??= {})[scheduled.id] = semesterEnd(action.date); });
+    }
     catch (error) { discord = 'The Discord event could not be created; Board has been notified.'; failure = ` Discord event failed: ${error.message}`; }
     await boardNotice(`<@${action.actorId}> added "${action.title}" to the TigerApps calendar.${failure}`);
     return { status: 'done', message: `Added to the TigerApps calendar. ${discord}`,
@@ -738,6 +741,17 @@ export function createBot(config, state, roster, github, mailer, calendar) {
     if (added + changed + removed) await boardNotice(`Calendar sharing updated: ${added} added, ${changed} changed, ${removed} removed.`);
   }
 
+  // Discord does not let apps set a recurrence end so finished series are deleted instead
+  async function endFinishedSeries() {
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
+    for (const [id, until] of Object.entries(state.get().discordSeries || {})) {
+      if (until >= today) continue;
+      // 10070 means the event was already deleted by hand
+      await guild.scheduledEvents.delete(id).catch(error => { if (error.code !== 10070) throw error; });
+      state.update(data => { delete data.discordSeries[id]; });
+    }
+  }
+
   async function ready() {
     guild = await client.guilds.fetch(server.guildId);
     await guild.roles.fetch();
@@ -783,9 +797,12 @@ export function createBot(config, state, roster, github, mailer, calendar) {
       }
     }
     try { await checkMissingRoster(); } catch { console.error('Initial roster review failed.'); }
-    const share = () => shareCalendar().catch(error => boardNotice(`Calendar sharing failed: ${error.message}`));
-    void share();
-    setInterval(() => { state.cleanExpired(); checkMissingRoster().catch(() => console.error('Roster review failed.')); void share(); }, 24 * 60 * 60_000).unref();
+    const calendarUpkeep = () => {
+      shareCalendar().catch(error => boardNotice(`Calendar sharing failed: ${error.message}`));
+      endFinishedSeries().catch(error => boardNotice(`Ending a finished Discord event series failed: ${error.message}`));
+    };
+    calendarUpkeep();
+    setInterval(() => { state.cleanExpired(); checkMissingRoster().catch(() => console.error('Roster review failed.')); calendarUpkeep(); }, 24 * 60 * 60_000).unref();
     console.log('TigerApps bot ready.');
   }
 

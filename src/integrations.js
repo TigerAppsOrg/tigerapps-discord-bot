@@ -143,11 +143,18 @@ export const timeZone = 'America/New_York';
 const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 const pad = value => String(value).padStart(2, '0');
 
-// wall-clock Eastern time to an exact instant
+const offsetMinutes = instant => {
+  const name = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' })
+    .formatToParts(new Date(instant)).find(part => part.type === 'timeZoneName').value;
+  const [, sign, hours, minutes] = name.match(/([+-])(\d{2}):(\d{2})/) || [null, '+', '0', '0'];
+  return (sign === '-' ? -1 : 1) * (Number(hours) * 60 + Number(minutes));
+};
+
+// wall-clock Eastern time to an exact instant, the second pass settles which side of a DST change it is on
 export function easternInstant(date, time) {
-  const offset = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' })
-    .formatToParts(new Date(`${date}T${time}:00Z`)).find(part => part.type === 'timeZoneName').value.slice(3);
-  return new Date(`${date}T${time}:00${offset || 'Z'}`);
+  const wall = Date.parse(`${date}T${time}:00Z`);
+  const first = wall - offsetMinutes(wall) * 60_000;
+  return new Date(wall - offsetMinutes(first) * 60_000);
 }
 
 export function parseWhen(dateText, timeText, now = new Date()) {
@@ -184,7 +191,7 @@ export function parseWhen(dateText, timeText, now = new Date()) {
   let end = match[4] ? minutes(match[4], match[5], match[6] || match[3]) : start + 60;
   // 11-1pm means 11am to 1pm
   if (!match[3] && match[6] && start >= end) start -= 12 * 60;
-  if (end <= start || end >= 24 * 60) throw new Error('The event needs to end after it starts, on the same day.');
+  if (start < 0 || end <= start || end >= 24 * 60) throw new Error('The event needs to end after it starts, on the same day.');
   const clock = value => `${pad(Math.floor(value / 60))}:${pad(value % 60)}`;
   const when = { date, start: clock(start), end: clock(end) };
   if (easternInstant(date, when.start) <= now) throw new Error('That time has already passed.');
