@@ -8,9 +8,10 @@ export function validateServerConfig(config) {
   for (const key of ['guest', 'member', 'alumni', 'teamLead', 'board']) {
     if (!id(config.roles?.[key])) throw new Error(`server.json needs roles.${key}`);
   }
-  for (const key of ['startHere', 'publicChat', 'announcements', 'boardLog']) {
+  for (const key of ['startHere', 'announcements', 'boardLog']) {
     if (!id(config.channels?.[key])) throw new Error(`server.json needs channels.${key}`);
   }
+  if (config.channels.publicChat !== undefined && !id(config.channels.publicChat)) throw new Error('Invalid channels.publicChat');
   if (new Set(Object.values(config.channels)).size !== Object.values(config.channels).length) {
     throw new Error('server.json reuses a channel ID');
   }

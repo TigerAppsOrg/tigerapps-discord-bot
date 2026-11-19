@@ -89,7 +89,7 @@ export function createOAuth(config, state, roster, client, boardNotice) {
         const ticket = await google.verifyIdToken({ idToken: tokens.id_token, audience: config.googleClientId });
         const identity = ticket.getPayload();
         const email = verifiedPrincetonEmail(identity);
-        if (!(await roster.byEmail(email))) throw new Error('This email is not on the current TigerApps roster. Ask a lead in the public chat.');
+        if (!(await roster.byEmail(email))) throw new Error('This email is not on the current TigerApps roster. Contact a Board member for roster help.');
         state.link(identity.sub, email, attempt.discordId);
         state.update(data => { delete data.oauth[token]; });
         let next = "You're verified. Return to Discord to finish setup.";
@@ -111,7 +111,7 @@ export function createOAuth(config, state, roster, client, boardNotice) {
       const message = [
         'Discord sign-in failed.', 'Sign in with the same Discord account that started setup.',
         'Use a verified Princeton Google account.',
-        'This email is not on the current TigerApps roster. Ask a lead in the public chat.',
+        'This email is not on the current TigerApps roster. Contact a Board member for roster help.',
         'This Princeton account is already linked to another Discord account.',
         'This Princeton email is already linked to another Discord account.',
         'This Discord account is already linked to another Princeton account.',

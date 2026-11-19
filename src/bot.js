@@ -151,6 +151,12 @@ export function assistedOnboardingDm(member, actorId, server, ordinaryAssigned =
     .setDescription(`<@${actorId}> verified your membership.\n\n${help}`)], allowedMentions: { parse: [] } };
 }
 
+export function guestChatHelp(channel, guestRole) {
+  const permissions = channel?.isTextBased() && channel.permissionsFor?.(guestRole);
+  return permissions && permissions.has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages])
+    ? `Use <#${channel.id}> to chat or ask for roster help.` : 'Contact a Board member for roster help.';
+}
+
 function commands(config) {
   const teamChoices = Object.keys(config.server.teams).map(name => ({ name, value: name }));
   return [
@@ -229,6 +235,9 @@ export function createBot(config, state, roster, github, mailer, calendar) {
     catch { await boardNotice(`Could not assign Guest to <@${member.id}>.`); }
   }
 
+
+  const guestHelp = () => guestChatHelp(guild?.channels.cache.get(server.channels.publicChat), server.roles.guest);
+
   async function startHere(interaction) {
     const link = state.linkedByDiscord(interaction.user.id);
     if (!link) {
@@ -239,7 +248,7 @@ export function createBot(config, state, roster, github, mailer, calendar) {
     await interaction.deferReply({ flags: ephemeral });
     const person = await roster.byEmail(link.email);
     if (!person) {
-      await interaction.editReply(card('Roster match needed', `Your Princeton email is not on the current roster. Ask a lead in <#${server.channels.publicChat}>.`, 0xe19a35));
+      await interaction.editReply(card('Roster match needed', `Your Princeton email is not on the current roster. ${guestHelp()}`, 0xe19a35));
       return;
     }
     const member = interaction.inCachedGuild() ? interaction.member : await currentMember(interaction.user.id);
@@ -290,7 +299,7 @@ export function createBot(config, state, roster, github, mailer, calendar) {
       await setOrdinaryRoles(member, chosen);
     } catch {
       await boardNotice(`Could not finish ordinary role assignment for <@${member.id}>. Check the current role mapping and hierarchy.`);
-      await interaction.editReply({ ...card('Role setup needs help', 'Please ask Board in the public chat.', 0xe19a35), components: [] });
+      await interaction.editReply({ ...card('Role setup needs help', guestHelp(), 0xe19a35), components: [] });
       return;
     }
     state.update(data => { delete data.onboarding[interaction.user.id]; });
@@ -710,7 +719,7 @@ export function createBot(config, state, roster, github, mailer, calendar) {
         else if (interaction.customId === 'onboard:guest') {
           await interaction.deferUpdate();
           await guest(await currentMember(interaction.user.id));
-          await interaction.editReply({ ...card('Welcome to TigerApps', `Use <#${server.channels.publicChat}> to chat or ask for roster help.`), components: [] });
+          await interaction.editReply({ ...card('Welcome to TigerApps', guestHelp()), components: [] });
           void boardNotice(`<@${interaction.user.id}> chose Guest access.`);
         } else if (interaction.customId === 'onboard:accepted') {
           const url = oauth.start(interaction.user.id);
@@ -785,9 +794,6 @@ export function createBot(config, state, roster, github, mailer, calendar) {
     await guild.channels.fetch();
     const ids = [server.roles.board, ...managedRoleIds(server)];
     for (const id of ids) if (!guild.roles.cache.has(id)) throw new Error(`Configured Discord role ${id} is missing.`);
-    for (const id of [
-      ...Object.values(server.channels), ...Object.values(server.teams).map(team => team.channelId),
-    ]) if (!guild.channels.cache.has(id)) throw new Error(`Configured Discord channel ${id} is missing.`);
     const me = await guild.members.fetchMe();
     if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles) ||
         managedRoleIds(server).some(id => me.roles.highest.comparePositionTo(guild.roles.cache.get(id)) <= 0) ||

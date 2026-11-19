@@ -4,6 +4,7 @@ import { Collection } from 'discord.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { guestChatHelp } from '../src/bot.js';
 import { loadConfig, managedRoleIds, validateServerConfig } from '../src/config.js';
 import { announcementPost, announcementPreview, assistedOnboardingDm, createBot, discordEvent, eventSummary, failureMessage, nextOccurrence, memberHeadshot, memberInfoCard, roleChange } from '../src/bot.js';
 import { Calendar, Github, announcementRecipients, calendarEvent, easternInstant, githubHandle, mailMessage, parseWhen } from '../src/integrations.js';
@@ -213,6 +214,9 @@ test('server mapping rejects duplicate role IDs and malformed channels', () => {
     teams: {}, functions: {}, years: {},
   };
   assert.equal(validateServerConfig(config), config);
+  const { publicChat, ...requiredChannels } = config.channels;
+  assert.doesNotThrow(() => validateServerConfig({ ...config, channels: requiredChannels }));
+  assert.throws(() => validateServerConfig({ ...config, channels: { ...requiredChannels, publicChat: 'invalid' } }), /publicChat/);
   assert.throws(() => validateServerConfig({ ...config, roles: { ...config.roles, member: config.roles.guest } }), /reuses/);
   assert.throws(() => validateServerConfig({ ...config, channels: { ...config.channels, startHere: 'invalid' } }), /startHere/);
 });
@@ -540,7 +544,7 @@ test('Board-assisted onboarding assigns roles before sending its member DM', asy
   const role = { comparePositionTo: () => 1 };
   const guild = { id: 'guild', ownerId: 'owner', roles: { cache: new Map([
     ['board', role], ...['guest', 'member', 'alumni', 'lead', 'team'].map(id => [id, {}])]), fetch: async () => {} },
-  channels: { cache: new Map(Object.values(server.channels).concat('team-channel').map(id => [id, channel])), fetch: async () => {} },
+  channels: { cache: new Map(Object.values(server.channels).filter(id => id !== server.channels.publicChat).concat('team-channel').map(id => [id, channel])), fetch: async () => {} },
   commands: { set: async () => {} } };
   const target = { id: 'target', guild, user: { bot: false, send: async message => { dm = message; } }, roles: {
     cache: new Map([['guild', {}], ['guest', {}]]), set: async ids => { assigned = ids; },
@@ -567,4 +571,12 @@ test('Board-assisted onboarding assigns roles before sending its member DM', asy
     assert.match(reply.embeds[0].toJSON().description, /DM sent/);
     assert.ok(logs.some(message => message.includes('onboarded <@target>')));
   } finally { client.destroy(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('guest help links only to a channel where Guests can chat', () => {
+  const channel = allowed => ({ id: 'guest-room', isTextBased: () => true,
+    permissionsFor: role => ({ has: () => role === 'guest' && allowed }) });
+  assert.match(guestChatHelp(undefined, 'guest'), /Contact a Board member/);
+  assert.match(guestChatHelp(channel(false), 'guest'), /Contact a Board member/);
+  assert.match(guestChatHelp(channel(true), 'guest'), /<#guest-room>/);
 });
