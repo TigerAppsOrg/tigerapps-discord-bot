@@ -43,6 +43,8 @@ flowchart LR
   Archive[(Private S3 deploy archive)] -.->|Install code| Bot
 ```
 
+When enabled, the TigerTasks integration sends a server-to-server request for `/task show` or `/task create`. The bot reads the verified Princeton email from its Discord account link. TigerTasks checks the shared connector credential and the member's active status. The Discord interaction ID identifies a create request so duplicate deliveries create one ticket. The bot acknowledges the interaction privately and sends the successful card as a channel message.
+
 Discord interactions arrive through the Gateway connection, so there is no Discord Interactions Endpoint URL. The GitHub App makes outbound API calls on commands and does not subscribe to webhooks, so its webhook can be inactive. The HTTP listener exposes only `/auth/*` callbacks and `/health`; `/health` returns 200 only when the Discord client is ready.
 
 Two systemd units keep the bot and tunnel running after reboot: [`tigerapps-discord-bot.service`](../deploy/tigerapps-discord-bot.service) and [`tigerapps-discord-tunnel.service`](../deploy/tigerapps-discord-tunnel.service). The bot unit has a 512 MB memory limit and one CPU of quota to constrain its impact on other applications on `TigerApps-Combined`. The tunnel token and bot credentials are stored on encrypted EBS; neither is placed in a unit file or repository.
