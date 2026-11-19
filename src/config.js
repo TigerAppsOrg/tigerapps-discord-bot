@@ -59,6 +59,8 @@ export function loadConfig() {
   if (!googleServiceAccountJson) throw new Error('Missing GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_SERVICE_ACCOUNT_FILE');
   const githubPrivateKey = secret(process.env.GITHUB_PRIVATE_KEY, process.env.GITHUB_PRIVATE_KEY_FILE);
   if (!githubPrivateKey) throw new Error('Missing GITHUB_PRIVATE_KEY or GITHUB_PRIVATE_KEY_FILE');
+  const tigerTasksSecret = process.env.TIGERTASKS_DISCORD_SECRET;
+  if (tigerTasksSecret && tigerTasksSecret.length < 32) throw new Error('TIGERTASKS_DISCORD_SECRET must contain at least 32 characters');
   const baseUrl = new URL(process.env.PUBLIC_BASE_URL);
   if (baseUrl.protocol !== 'https:' && baseUrl.hostname !== 'localhost') {
     throw new Error('PUBLIC_BASE_URL must use HTTPS outside localhost');
@@ -73,6 +75,7 @@ export function loadConfig() {
     port: Number(process.env.PORT || 3000),
     dataFile: process.env.DATA_FILE || 'data/state.json',
     discordToken: process.env.DISCORD_TOKEN,
+    tigerTasksSecret,
     discordAppId: process.env.DISCORD_APP_ID,
     discordSecret: process.env.DISCORD_CLIENT_SECRET,
     googleClientId: process.env.GOOGLE_CLIENT_ID,

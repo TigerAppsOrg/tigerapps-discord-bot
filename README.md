@@ -46,11 +46,23 @@ Set these through the host's private environment file. The Google service-accoun
 | `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, `GITHUB_PRIVATE_KEY` or `GITHUB_PRIVATE_KEY_FILE` | GitHub organization invitations and removals |
 | `SERVER_CONFIG_FILE`, `DATA_FILE` | Optional paths; default to `server.json` and `data/state.json` |
 
-Run `npm ci` and `npm test` before installing the bot. The [systemd units](deploy/) run the bot and Cloudflare Tunnel on EC2. `/health` returns 200 when the Discord client is connected. Start the bot only after the intended roles, channels, and permissions have been tested. The bot registers its seven guild commands and posts one onboarding panel on first startup.
+Run `npm ci` and `npm test` before installing the bot. The [systemd units](deploy/) run the bot and Cloudflare Tunnel on EC2. `/health` returns 200 when the Discord client is connected. Start the bot only after the intended roles, channels, and permissions have been tested. The bot registers its guild commands and posts one onboarding panel on first startup.
 
 Updates merged into `main` run tests and deploy automatically through [GitHub Actions](.github/workflows/ci.yml). The workflow uploads a commit archive to private S3 and invokes a fixed Systems Manager document on the EC2 host. The host installs and tests a new release, switches the bot code symlink, and restarts only the bot service. It restores the prior release if the bot does not become healthy. Credentials and state remain on encrypted EBS; see the [architecture](docs/architecture.md).
 
 For local mailbox authorization, set `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET`, run `npm run authorize-mail`, open the printed Google URL yourself, and sign in as `it.admin@princetonusg.com`. Keep the resulting ignored file private.
+
+## Use TigerTasks in Discord
+
+Use `/task show ticket:TIG-212` to post the ticket title, status, assignees, open blockers, and a link in a private member text channel. The card is a regular message that everyone in that channel can read.
+
+Use `/task create title:Fix import` to create a ticket under your verified Princeton identity. In a mapped team channel with one active TigerTasks project, the bot uses that project. If the channel has no single project, enter its name in the `project` option. For example, use `/task create title:Fix import project:TigerOps`. Errors are visible only to the person who ran the command.
+
+### Enable the commands
+
+Deploy the [TigerTasks Discord endpoint](https://github.com/TigerAppsOrg/TigerTasks#connect-the-discord-bot) first. Generate one shared secret with `openssl rand -hex 32`. Set `TIGERTASKS_DISCORD_SECRET` to the same value in the private environments of TigerTasks and the bot. Restart TigerTasks, then the bot. The bot registers `/task` only when configured. Members use their existing `/onboard` link.
+
+Use a guild text channel that explicitly denies **View Channel** to `@everyone`. Guest and Alumni must not be able to view the channel. Grant viewing access only to member, leadership, configured team, function, or year roles, or the bot itself. Give the bot **View Channel**, **Send Messages**, and **Embed Links**. The bot checks the audience again before it posts the card.
 
 ## Access boundaries
 

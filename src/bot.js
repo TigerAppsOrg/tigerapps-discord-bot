@@ -5,6 +5,7 @@ import {
   LabelBuilder, MessageFlags, ModalBuilder, PermissionsBitField, RadioGroupBuilder, RadioGroupOptionBuilder, SlashCommandBuilder,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
+import { handleTask, requestTask, taskCommand } from './tasks.js';
 import { managedRoleIds } from './config.js';
 import { announcementRecipients, calendarEvent, easternInstant, githubHandle, mailSender, parseWhen, semesterEnd } from './integrations.js';
 import { createOAuth } from './oauth.js';
@@ -169,6 +170,7 @@ function commands(config) {
     new SlashCommandBuilder().setName('github-invite').setDescription('Invite a roster member to the GitHub organization')
       .addStringOption(option => option.setName('username').setDescription('GitHub username on the roster'))
       .addStringOption(option => option.setName('email').setDescription('Exact Princeton roster email')),
+    ...(config.tigerTasksSecret ? [taskCommand] : []),
   ].map(command => command.toJSON());
 }
 
@@ -353,6 +355,11 @@ export function createBot(config, state, roster, github, mailer, calendar) {
     }
     if (!interaction.inCachedGuild()) throw new UserError('Server member data unavailable. Try again.');
     const actor = interaction.member;
+    if (interaction.commandName === 'task') {
+      if (!config.tigerTasksSecret) throw new UserError('The TigerTasks connection is disabled.');
+      return handleTask(interaction, server, state.linkedByDiscord(actor.id),
+        (email, input) => requestTask(config.tigerTasksSecret, email, input));
+    }
     if (interaction.commandName === 'info') {
       if (!isBoard(actor) && !isLead(actor) && !actor.roles.cache.has(server.roles.member)) {
         throw new UserError('Only TigerApps members can use /info.');
