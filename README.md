@@ -22,7 +22,7 @@ Node.js 20+ and persistent private storage. Cloudflare routes `https://api.tiger
    | --- | --- |
    | `guildId` | TigerApps server ID |
    | `roles` | IDs for `guest`, `member`, `alumni`, `teamLead`, `board` |
-   | `channels` | IDs for `startHere`, `publicChat`, `announcements`, `boardLog` |
+   | `channels` | IDs for `startHere`, `announcements`, and `boardLog`. Set `publicChat` only if guests can view and send messages there. |
    | `teams` | Team name to `{ "roleId": ID, "channelId": ID, "leadIds": [Discord user IDs] }` |
    | `functions` | Ordinary function name to role ID, such as Engineering or Design |
    | `years` | Class year to role ID |

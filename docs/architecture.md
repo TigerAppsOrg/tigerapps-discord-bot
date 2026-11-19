@@ -162,7 +162,9 @@ The roster service account receives Editor sharing on the specific workbook so i
 
 The bot uses one process and an atomically replaced local `data/state.json` for account links, pending OAuth attempts, action confirmations, the onboarding panel ID, and the rollout cutoff. Running multiple replicas against this file is unsupported. The state and credentials live on a dedicated encrypted EBS volume. Back up and transfer the state file before moving hosts; losing it breaks existing account links and changes how the first-rollout cutoff is interpreted. Keep `.env`, `server.json`, the state file, service-account JSON, Gmail refresh token, GitHub private key, and Cloudflare connector credentials out of Git and out of this document.
 
-Startup validates mapped Discord roles, channels, hierarchy, and send permissions before registering commands or posting the onboarding panel. A failed validation should be fixed at the source mapping or Discord permission, then the process restarted. `/remove` and `/resign` flag the roster but leave Board to update membership rows; a person still on the Clean roster can otherwise regain access by onboarding or invitation.
+Startup validates mapped Discord roles, required channels, hierarchy, and send permissions before registering commands or posting the onboarding panel. A failed validation should be fixed at the source mapping or Discord permission, then the process restarted. `/remove` and `/resign` flag the roster but leave Board to update membership rows; a person still on the Clean roster can otherwise regain access by onboarding or invitation.
+
+Guest chat is optional. If the configured channel is absent or the Guest role cannot view and send messages there, onboarding directs the person to a Board member. The bot keeps the existing channel permissions.
 
 ## Endpoints and health
 
